@@ -1,0 +1,141 @@
+import numpy as np
+import tensorflow as tf
+
+
+def compute_damages(player, states):
+    return max([states[-1].players[player].percent - states[0].players[player].percent, 0.0])
+
+
+def is_dead(p_num, states):  # 2 states
+    return float(
+        (states[-1].players[p_num].action_state.value <= 0xA) and (states[0].players[p_num].action_state.value > 0xA))
+
+
+"""
+def isTeching(p_num):
+    if .status_hist[p_num] == 0:
+        for state in self.state_queue:
+            if 0x00C7 <= state.players[p_num].action_state.value <= 0x00CC:
+                if self.id == 0:
+                    print('player', p_num, 'techd.')
+                self.status_hist[p_num] = 55
+                return True
+    return False
+
+
+def isRespawning(p_num):
+    for state in self.state_queue:
+        if state.players[p_num].action_state.value <= 0x0C:
+            return True
+    return False
+
+
+def is_done(self, players=[0, 1]):
+    for p_num in players:
+        if self.isDead(p_num):
+            if self.id == 0:
+                print('Done.')
+            return True
+
+    return False
+
+
+def isSpecialFalling(self, p_num):
+    return (0x0023 <= self.state.players[p_num].action_state.value <= 0x0025) and abs(
+        self.state.players[p_num].pos_x) < 60
+
+"""
+
+
+def compute_all_rewards(states, mode, damage_ratio=0.01, distance_ratio=0.0003, loss_intensity=1, death_scale=1.0):
+    if mode == 1:
+        p1 = 0
+        p2 = 1
+    else:
+        p1 = 1
+        p2 = 0
+
+    rews = np.zeros((states.shape[0] - 1,), dtype=np.float32)
+    for i in range(states.shape[0] - 1):
+        rews[i] = compute_rewards(states[i: i + 2], p1, p2, damage_ratio=damage_ratio, distance_ratio=distance_ratio,
+                                  loss_intensity=loss_intensity)
+
+        rews[i] += death_scale * (is_dead(p1, states[i: i + 2]) - is_dead(p2, states[i: i + 2]))
+
+    return rews
+
+
+def compute_rewards(states, p1, p2, damage_ratio, distance_ratio, loss_intensity):
+    """Computes rewards from a list of state transitions.
+
+    Args:
+      states: current states
+      enemies: The list of pids on the enemy team.
+      allies: The list of pids on our team.
+      damage_ratio: How much damage (percent) counts relative to stocks.
+      distance_ratio: How much distance counts
+      loss_intensity: does loosing suck ?
+      velocity_ratio: make if flashy
+      recovery_ratio: reward if goes up when low on y axis
+    Returns:
+      A length T numpy array with the rewards on each transition.
+    """
+
+    # pids = enemies + allies
+    # players = [[], []]
+    # for enum, _ in enumerate(players):
+    #    players[enum] = [state.players[enum] for state in states]
+
+    # players = states['players'] -70.3 -11.75 -110
+
+    # print(players[0][-1].pos_y)
+    # is_x_moving = np.abs(players[1][-1].self_air_vel_x) + np.abs(players[1][-1].speed_ground_x_self) + \
+    #            np.abs(players[1][-1].attack_vel_x) > 0.5
+    # velocity_ratio = (1.0+velocity_ratio) if is_x_moving else 1.0
+
+    # damages = {p: compute_damages(players[p]) for p in pids}
+    # losses = {p:  damage_ratio * damages[p] for p in pids}
+
+    distance_rwd = (distance(states[0]) - distance(states[-1])) * distance_ratio
+
+    # dx = players[1][-1].pos_x - players[0][-1].pos_x
+    # dy = players[1][-1].pos_y - players[0][-1].pos_y
+    # if dx * players[1][-1].self_air_vel_x > 0 or dx * players[1][-1].speed_ground_x_self > 0:
+    #    distance_rwd = 0
+    # if players[1][-1].self_air_vel_x + players[1][-1].speed_ground_x_self == 0:
+    #    distance_rwd = 0
+    # elif dy * players[1][-1].self_air_vel_y > 0:
+    #    distance_rwd = 0
+    # self_dx = abs(players[1][-1].pos_x - players[1][0].pos_x)
+    # self_dy = abs(players[1][-1].pos_y - players[1][0].pos_y)
+    # if self_dx + self_dy == 0:
+    #    distance_rwd = 0
+
+    # falling_loss = falling_penalty( players[1]) * recovery_ratio
+    total = distance_rwd + damage_ratio * (compute_damages(p1, states) - compute_damages(p2, states))
+    # total = distance_rwd + sum(losses[p] for p in enemies) - (sum(losses[p] for p in allies))
+    if total < 0:
+        total *= loss_intensity
+
+    return total
+
+
+def falling_penalty(player):
+    if player[-1].pos_y > -9:
+        return 0.0
+    else:
+        # print("Has to recover !")
+        return abs(player[-1].pos_y) / 110.0
+
+
+def distance(state):
+    players = state.players
+    x0 = players[0].pos_x
+    y0 = players[0].pos_y
+    x1 = players[1].pos_x
+    y1 = players[1].pos_y
+
+    dx = x1 - x0
+    dy = y1 - y0
+
+    return np.sqrt(np.square(dx) + np.square(dy))
