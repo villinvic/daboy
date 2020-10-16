@@ -5,7 +5,6 @@ from ReplayBuffer import ReplayBuffer
 import RERPI
 import Pad
 
-from tf2rl.algos.sac_discrete import SACDiscrete
 
 from threading import Event
 from MeleeEnv import MeleeEnv
@@ -18,6 +17,11 @@ import pickle
 from subprocess import Popen
 from sys import stdout
 import psutil
+
+
+#Cudnn fix ...
+physical_devices = tf.config.list_physical_devices('GPU')
+tf.config.experimental.set_memory_growth(physical_devices[0], enable=True)
 
 
 # TODO
@@ -55,8 +59,8 @@ class Main(Default):
         Option('n_actors', type=int, default=1),
         Option('loss', type=str, default='mse'),
         Option('layer_size', type=int, default=256),
-        Option('dolphin_dir', type=str, default=r'dolphins'),
-        Option('iso_path', type=str, default=r'C:\Users\Victor\Desktop\GRAND BAZARD\ssbmja\ssbm.iso'),
+        Option('dolphin_dir', type=str, default='../dolphin/'),
+        Option('iso_path', type=str, default=r'../isos/melee.iso'),
         Option('video_backend', type=str, default='D3D'),
         Option('cuda', type=bool, default=False),  # TODO
         Option('n_loops', type=int, default=10 ** 6),
@@ -74,6 +78,7 @@ class Main(Default):
         Option('generate_exp', action='store_true'),
         Option('mode', choices=['learner', 'actor', 'both'], default='both'),
         Option('eval', action='store_true'),
+        Option('char', type=str, default='ganon'),
     ]
 
     _members = [
@@ -90,45 +95,23 @@ class Main(Default):
             'actor': self.mode == 'actor' or self.mode == 'both'
         }
 
-        self.dolphin_dir = [self.dolphin_dir + '\\' + '1' for i in range(self.n_actors)]
-        self.pad_path = [self.dolphin_dir[i] + r'\User\Pipes' for i in range(self.n_actors)]
-        self.mw_path = [self.dolphin_dir[i] + r'\User\MemoryWatcher' for i in range(self.n_actors)]
-        self.dolphin_exe = [self.dolphin_dir[i] + r'\Dolphin.exe' for i in range(self.n_actors)]
-        self.dump_path = self.output_dir + "\\" + self.dump_file
-        self.memory = self.memory = ReplayBuffer(300, self.ep_length)
+        self.pad_path = [self.dolphin_dir + 'User/Pipes/' for i in range(self.n_actors)]
+        self.mw_path = self.dolphin_dir + 'User/MemoryWatcher/'
+        self.dolphin_exe = self.dolphin_dir + 'dolphin-emu-nogui'
 
         if self.mode['learner']:
-            self.action_space = MeleeEnv.action_space
-            state_shape = MeleeEnv.observation_space
+            dummy_env = MeleeEnv(self.char)
+            self.action_space = dummy_env.action_space
+            state_shape = dummy_env.observation_space
             print(state_shape)
 
             if self.load_checkpoint or self.load_memory:
                 self.n_warmup = 0
-            """
-            self.net = SACDiscrete(state_shape=state_shape,
-                                   action_dim=self.action_space.len,
-                                   discount=self.discount_factor,
-                                   critic_fn=None,
-                                   actor_fn=None,
-                                   lr=self.learning_rate,
-                                   alpha=self.alpha,
-                                   memory_capacity=self.mem_size,
-                                   batch_size=self.batch_size,
-                                   n_warmup=self.n_warmup,
-                                   update_interval=1,
-                                   target_update_interval=self.replace_target,
-                                   tau=3e-6,
-                                   auto_alpha=False,
-                                   gpu=0,
-                                   eps=self.epsilon)
-            """
+
             self.net = RERPI.AC(state_shape=state_shape, action_dim=self.action_space.len, epsilon_greedy=self.epsilon,
                                 lr=self.learning_rate, gamma=self.discount_factor, entropy_scale=self.alpha, gae_lambda=self.gae_lambda, gpu=0,
                                 traj_length=self.ep_length)
 
-            # self.memory = py_uniform_replay_buffer.PyUniformReplayBuffer( capacity= self.mem_size,
-            #              data_spec=tensor_spec.to_nest_array_spec(MeleeEnv.data_spec))
-            self.dump_size = self.mem_size
 
             # Save and restore model
             self.checkpoint = tf.train.Checkpoint(policy=self.net, actor=self.net.policy)
@@ -158,10 +141,9 @@ class Main(Default):
         if not first:
             self.n_warmup = 0
         return [Actor(self.self_play and not (i == self.n_actors - 1 and self.eval), self.output_dir,
-                      self.ep_length, self.dolphin_exe[i], self.dolphin_dir[i], self.iso_path,
-                      self.video_backend if (i == 0 or (i == self.n_actors - 1 and self.eval) or self.render_all) else "Null", self.mw_path[i],
-                      self.mw_port + 4 * i, self.pad_path[i],
-                      self.pad_port + 4 * i, i, self.n_actors, self.epsilon, self.n_warmup) for i in
+                      self.ep_length, self.dolphin_exe, self.dolphin_dir, self.iso_path,
+                      self.video_backend if (i == 0 or (i == self.n_actors - 1 and self.eval) or self.render_all) else "Null", self.mw_path,
+                      self.pad_path[i], self.pad_port + 4 * i, i, self.n_actors, self.epsilon, self.n_warmup) for i in
                 range(self.n_actors)]
 
     def load_mem(self):

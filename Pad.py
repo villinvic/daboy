@@ -1,7 +1,8 @@
 import enum
 import zmq
 from utils import write_with_folder
-
+import os
+import sys
 
 @enum.unique
 class UsefullButton(enum.Enum):
@@ -38,6 +39,11 @@ class Trigger(enum.Enum):
 class Stick(enum.Enum):
     MAIN = 0
     C = 1
+    
+sh_dict = {
+        'mario':3,
+        'ganon':3,
+}
 
 
 class ControllerState(dict):
@@ -104,7 +110,7 @@ class Action_Space(dict):
         self[self.len] = cs
         self.len += 1
 
-    def __init__(self):
+    def __init__(self, char='mario'):
         dict.__init__(self)
         self.stick_states = [
             (0.5, 0.5),
@@ -141,7 +147,7 @@ class Action_Space(dict):
 
         for s_state in self.stick_states:
             for item in UsefullButton:
-                if not item.name == 'Z' and not item.name == 'X' and not (item.name == 'B' and s_state[1] != 0.5) \
+                if not item.name == 'Z' and not item.name == 'X' \
                         and not (item.name == 'L' and s_state[1] > 0.5):
                     self.add(ControllerState(button=item.name, stick=s_state))
 
@@ -156,7 +162,7 @@ class Action_Space(dict):
         self.add(ControllerState(c_stick=(0.5, 1.0)))
 
         # simple x
-        self.add(ControllerState(button='X', duration=4))
+        self.add(ControllerState(button='X', duration=sh_dict[char]))
 
         for s_state in self.stick_states_upB:
             self.add(ControllerState(button='B', stick=s_state))
@@ -209,32 +215,46 @@ class Action_Space(dict):
 class Pad:
     """Writes out controller inputs."""
 
-    def __init__(self, path, port):
+    def __init__(self, path):
         """Create, but do not open the fifo."""
         self.pipe = None
         self.path = path
-        self.context = zmq.Context()
-        self.port = port
+        #self.context = zmq.Context()
         self.message = ""
         self.action_space = []
 
-        write_with_folder(self.path, str(self.port))
+        #write_with_folder(self.path, str(self.port))
 
-        self.socket = self.context.socket(zmq.PUSH)
-        self.socket.bind("tcp://127.0.0.1:%d" % self.port)
+        #self.socket = self.context.socket(zmq.PUSH)
+        #self.socket.bind("tcp://127.0.0.1:%d" % self.port)
+        
+        
+    def connect(self):
+        try:
+                os.unlink(self.path)
+        except:
+                pass
+                
+        os.mkfifo(self.path)
+
+        self.pipe = open(self.path, 'w', buffering=1)
+        #print('pad connected')
+        #sys.exit()
 
     def __exit__(self, *args):
         pass
         
     def unbind(self):
-        self.socket.unbind("tcp://127.0.0.1:%d" % self.port)
+        #self.socket.unbind("tcp://127.0.0.1:%d" % self.port)
+        self.pipe.close()
 
     def flush(self):
-        self.socket.send_string(self.message)
+        #self.socket.send_string(self.message)
+        self.pipe.write(self.message)
         self.message = ""
 
     def write(self, command, buffering=False):
-        self.message += command
+        self.message += command + '\n'
         if not buffering:
             self.flush()
 

@@ -1,7 +1,6 @@
 import tensorflow as tf
 from tensorflow.keras.layers import Dense, Reshape, GRU
 import numpy as np
-from tf_agents.utils import value_ops
 import copy
 
 
@@ -82,11 +81,11 @@ class CategoricalActor(tf.keras.Model):
         self.state_ndim = len(state_shape)
         self.epsilon = tf.Variable(epsilon, name="Actor_epsilon", trainable=False, dtype=tf.float32)
 
-        self.l1 = Dense(256, activation='relu', dtype='float32', name="L1")
-        self.r = Reshape((1, 256))
-        self.l2 = GRU(256, time_major=True, stateful=True, return_sequences=True)
-        self.r2 = Reshape((256,))
-        # self.l2 = Dense(256, activation='relu', dtype='float32', name="L2")
+        self.l1 = Dense(128, activation='relu', dtype='float32', name="L1")
+        self.r = Reshape((1, 128))
+        self.l2 = GRU(128, time_major=True, stateful=True, return_sequences=True)
+        self.r2 = Reshape((128,))
+        # self.l2 = Dense(128, activation='relu', dtype='float32', name="L2")
         self.prob = Dense(action_dim, name="prob", activation="softmax")
 
         # test
@@ -219,11 +218,11 @@ class V(tf.keras.Model):
     def __init__(self, state_shape, name='vf'):
         super().__init__(name=name)
 
-        self.l1 = Dense(256, name="L1", activation='relu')
-        self.r = Reshape((1, 256))
-        self.l2 = GRU(256, time_major=True, stateful=True, return_sequences=True)
-        self.r2 = Reshape((256,))
-        # self.l2 = Dense(256, activation='relu', dtype='float32', name="L2")
+        self.l1 = Dense(128, name="L1", activation='relu')
+        self.r = Reshape((1, 128))
+        self.l2 = GRU(128, time_major=True, stateful=True, return_sequences=True)
+        self.r2 = Reshape((128,))
+        # self.l2 = Dense(128, activation='relu', dtype='float32', name="L2")
         self.l3 = Dense(1, name="L3", activation='linear')
 
         dummy_state = tf.constant(

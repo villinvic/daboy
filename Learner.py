@@ -78,12 +78,12 @@ class ACLearner:
     def setup_context(self):
         context = zmq.Context()
         self.exp_socket = context.socket(zmq.PULL)
-        self.exp_socket.bind("tcp://192.168.32.1:5557")
+        self.exp_socket.bind("tcp://127.0.0.1:5557")
         self.blob_socket = context.socket(zmq.PUB)
-        self.blob_socket.bind("tcp://192.168.32.1:5555")
+        self.blob_socket.bind("tcp://127.0.0.1:5555")
         self.topic = b''
         self.eval_socket = context.socket(zmq.PULL)
-        self.eval_socket.bind("tcp://192.168.32.1:5556")
+        self.eval_socket.bind("tcp://127.0.0.1:5556")
 
 
     def empty_sockets(self):
@@ -209,12 +209,12 @@ class Learner:
     def setup_context(self):
         context = zmq.Context()
         self.exp_socket = context.socket(zmq.PULL)
-        self.exp_socket.bind("tcp://192.168.32.1:5557")
+        self.exp_socket.bind("tcp://127.0.0.1:5557")
         self.blob_socket = context.socket(zmq.PUB)
-        self.blob_socket.bind("tcp://192.168.32.1:5555")
+        self.blob_socket.bind("tcp://127.0.0.1:5555")
         self.topic = b''
         self.eval_socket = context.socket(zmq.PULL)
-        self.eval_socket.bind("tcp://192.168.32.1:5556")
+        self.eval_socket.bind("tcp://127.0.0.1:5556")
 
     def compute_traj(self, traj):
         # todo Compute before storing ?

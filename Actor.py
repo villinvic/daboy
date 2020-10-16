@@ -2,43 +2,23 @@ from threading import Thread, Event
 import numpy as np
 import tensorflow as tf
 from DolphinInitializer import DolphinInitializer
-from MemoryWatcher import MemoryWatcher
+from MemoryWatcher import MemoryWatcher, MemoryWatcherZMQ
 from State import State
 from StateManager import StateManager
 from MenuManager import MenuManager
 import State as S
 import Pad as P
-from utils import convertState2Array
+from utils import convertState2Array, make_async
 from rewards import compute_rewards
 from MeleeEnv import *
-from tf2rl.policies import categorical_actor
 from RERPI import CategoricalActor
+import signal
 
 from os import walk
 from copy import deepcopy
 import time
 import zmq
-
-
-class Agent(categorical_actor.CategoricalActor):
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def get_action(self, state):
-        assert isinstance(state, np.ndarray)
-        is_single_state = len(state.shape) == self.state_ndim
-
-        state = state[np.newaxis].astype(
-            np.float32) if is_single_state else state
-        action = self._get_action_body(tf.constant(state))
-
-        return action.numpy()[0] if is_single_state else action
-
-    @tf.function
-    def _get_action_body(self, state):
-        param = self._compute_dist(state)
-        return tf.squeeze(self.dist.sample(param), axis=1)
+import sys
 
 
 class ACAgent(CategoricalActor):
@@ -61,53 +41,57 @@ class ACAgent(CategoricalActor):
         return tf.squeeze(self.dist.sample(param), axis=1)
 
 
-class Actor(Thread):
+class Actor:
 
     def __init__(self, self_play, ckpt_dir, ep_length,
-                 dolphin_exe, dolphin_dir, iso_path, video_backend, mw_path, mw_port,
-                 pad_path, pad_port, actor_id, n_actors, epsilon, n_warmup
-                 ):
+                 dolphin_dir, iso_path, video_backend,
+                 actor_id, n_actors, epsilon, n_warmup,
+                 char):
+                 
+        signal.signal(signal.SIGINT, self.exit)
         super().__init__()
+        
         self.self_play = self_play
         self.ckpt_dir = ckpt_dir
 
-        base_mw = mw_path + "\\" + str(mw_port)
-        self.mw_path = base_mw + "\\MemoryWatcher"
-        self.locations = base_mw + "\\Locations.txt"
-        self.pad_path = pad_path + "\\" + str(mw_port) + "\\daboy"
-        print(dolphin_exe, dolphin_dir, self.mw_path, mw_port, self.pad_path, pad_port)
+        self.mw_path = dolphin_dir + 'User/MemoryWatcher/MemoryWatcher'
+        self.locations = dolphin_dir + 'User/MemoryWatcher/Locations.txt'
+        self.pad_path = dolphin_dir + 'User/Pipes/daboy'
+        dolphin_exe = dolphin_dir + 'dolphin-emu-nogui'
+        print(dolphin_exe, dolphin_dir, self.mw_path, self.pad_path)
 
-        self.setDaemon(True)
+        #self.setDaemon(True)
         self.id = actor_id
         self.n_actors = n_actors
-        self.port = int(mw_port)
-        self.dolphin_proc = DolphinInitializer(self.id, dolphin_exe, iso_path, video_backend, self.port)
+        self.dolphin_proc = DolphinInitializer(self.id, dolphin_exe, iso_path, video_backend)
         self.dolphin_dir = dolphin_dir
-        self.action_space = P.Action_Space()
+        self.action_space = P.Action_Space(char=char)
         self.discrete_action_space = [i for i in range(self.action_space.len)]
         self.shutdown_flag = Event()
         self.steps = 0
         self.epsilon = 0.
         self.current_episode_length = 0
         self.opp_current_episode_length = 0 if self.self_play else None
-
+        env = MeleeEnv(char)
         self.game_start = True
         # self.policy = Agent(MeleeEnv.observation_space, MeleeEnv.action_space.len, epsilon, units=[512, 256])
         # self.opp = Agent(MeleeEnv.observation_space, MeleeEnv.action_space.len, epsilon,
         #                 units=[512, 256]) if self.self_play else None
-        self.policy = ACAgent(MeleeEnv.observation_space, MeleeEnv.action_space.len, epsilon)
-        self.opp = ACAgent(MeleeEnv.observation_space, MeleeEnv.action_space.len, epsilon) if self.self_play else None
+        self.policy = ACAgent(env.observation_space, env.action_space.len, epsilon)
+        
+        self.opp = ACAgent(env.observation_space, env.action_space.len, epsilon) if self.self_play else None
         if self.self_play:
             self.checkpoint = tf.train.Checkpoint(actor=self.opp)
 
         self.n_warmup = n_warmup
 
-        self.mw = MemoryWatcher(self.mw_path, self.port)
+        self.mw = MemoryWatcherZMQ(self.mw_path)
         self.state = GameMemory()
         self.sm = StateManager(self.state)
-        self.pad = [P.Pad(self.pad_path + "_enemy", int(pad_port) + 1), P.Pad(self.pad_path, int(pad_port))]
+        self.pad = [P.Pad(self.pad_path + "_enemy"), P.Pad(self.pad_path)]
+        make_async(self.pad)
         self.mm = MenuManager()
-        self.mm.setup_move(self.pad, 1, cpu=not self.self_play)
+        self.mm.setup_move(self.pad, 1, cpu=not self.self_play, char=char)
         self.activated = False if actor_id == 0 else True
 
         self.write_locations()
@@ -145,7 +129,7 @@ class Actor(Thread):
         # self.trajectory = Trajectory(ep_length, 1)
         self.trajectory = {
             'state': np.array(
-                [np.zeros(MeleeEnv.observation_space, dtype=np.float32) for _ in range(self.episode_length)],
+                [np.zeros(env.observation_space, dtype=np.float32) for _ in range(self.episode_length)],
                 dtype=np.ndarray),
             'action': np.zeros((self.episode_length,), dtype=np.int32),
             'rew': np.zeros((self.episode_length,), dtype=np.float32),
@@ -154,7 +138,7 @@ class Actor(Thread):
         if self.self_play:
             # self.opp_trajectory = Trajectory(ep_length, -1)
             self.opp_trajectory = {
-                'state': np.array([np.zeros(MeleeEnv.observation_space, ) for _ in range(self.episode_length)],
+                'state': np.array([np.zeros(env.observation_space, ) for _ in range(self.episode_length)],
                                   dtype=np.ndarray),
                 'action': np.zeros((self.episode_length,), dtype=np.int32),
                 'rew': np.zeros((self.episode_length,), dtype=np.float32),
@@ -193,13 +177,13 @@ class Actor(Thread):
     def setup_context(self):
         context = zmq.Context()
         self.exp_socket = context.socket(zmq.PUSH)
-        self.exp_socket.connect("tcp://192.168.32.1:5557")
+        self.exp_socket.connect("tcp://127.0.0.1:5557")
         self.blob_socket = context.socket(zmq.SUB)
-        self.blob_socket.connect("tcp://192.168.32.1:5555")
+        self.blob_socket.connect("tcp://127.0.0.1:5555")
         self.blob_socket.subscribe(b'')
         if not self.self_play:
             self.eval_socket = context.socket(zmq.PUSH)
-            self.eval_socket.connect("tcp://192.168.32.1:5556")
+            self.eval_socket.connect("tcp://127.0.0.1:5556")
         else:
             self.eval_socket = None
 
@@ -547,14 +531,23 @@ class Actor(Thread):
             elif p1 == 1:
                 pass
 
-    def exit(self):
+    def exit(self, signal=signal.SIGINT, frame=None):
         self.shutdown_flag.set()
+        self.dolphin_proc.close()
+        print("Actor", self.id, "Exited.")
+        sys.exit()
+        self.mw.unbind()
+        for p in self.pad:
+            if p is not None:
+                p.unbind()
+
 
     def main_loop(self):
         last_frame = self.state.frame
         res = next(self.mw)
         if res is not None:
             self.sm.handle(res)
+
 
         if self.state.frame > last_frame:
             if self.state.frame - last_frame > 1:
@@ -579,19 +572,12 @@ class Actor(Thread):
         self.dolphin_proc.run()
 
         # wait dolphin
-        time.sleep(6)
+        time.sleep(2)
 
         while not self.shutdown_flag.is_set():
             # print("Actor", self.id)
             self.main_loop()
 
-        self.dolphin_proc.close()
-        self.mw.unbind()
-        for p in self.pad:
-            if p is not None:
-                p.unbind()
-
-        print("Actor", self.id, "Exited.")
 
         # if self.id == 0:
         #    print(np.mean(self.bench[0]), np.mean(self.bench[1]))

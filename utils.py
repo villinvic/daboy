@@ -4,6 +4,15 @@ import os
 import errno
 import numpy as np
 from State import UsefulActionState
+from threading import Thread
+
+def make_async(xs):
+        threads = len(xs) * [None]
+        for i,x in enumerate(xs):
+                threads[i] = Thread(target=x.connect)
+                threads[i].start()
+        
+ 
 
 def uniquify(path, sep=''):
     def name_sequence():
@@ -100,9 +109,9 @@ def write_with_folder(path, text):
 
 from MeleeEnv import MeleeEnv
 def convertState2Array(state, p1=0, p2=1, last_action_id=0):
-    last_action = [(np.float32(1.0) if i == last_action_id else np.float32(0.0)) for i in range(MeleeEnv.action_space.len)]
+    #last_action = [(np.float32(1.0) if i == last_action_id else np.float32(0.0)) for i in range(MeleeEnv.action_space.len)]
     #dist = np.sqrt(np.square(state.players[1].pos_x - state.players[0].pos_x) + np.square((state.players[1].pos_y - state.players[0].pos_y)**2))
 
-    array = player2list(state, player_num=p1) + player2list(state, player_num=p2) + state_info2list( state)  + last_action
+    array = player2list(state, player_num=p1) + player2list(state, player_num=p2) + state_info2list( state)
     #print(array)
     return array
