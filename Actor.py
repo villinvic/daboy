@@ -42,6 +42,10 @@ class ACAgent(CategoricalActor):
         return action
 
 
+# TODO
+# Needs cleanup :
+# p1,p2 -> pids[]
+
 class Actor:
 
     def __init__(self, self_play, ckpt_dir, ep_length,
