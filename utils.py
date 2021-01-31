@@ -3,8 +3,12 @@ import tempfile
 import os
 import errno
 import numpy as np
-from State import UsefulActionState
 from threading import Thread
+from Pad import Action_Space
+from MeleeEnv import MeleeEnv
+
+action_space = Action_Space()
+dummy_env = MeleeEnv()
 
 def make_async(xs):
         threads = len(xs) * [None]
@@ -42,47 +46,73 @@ def get_done( transition):
 
 def get_rew( transition):
     return transition.rew
-
+    
+    
+def set_0( value):
+        return 0
+        
+def sym_action_b( action):
+        return action_space.sym[action]
+def sym_state_b( state):
+        last_action = state[-MeleeEnv.action_space.len-1:-1]
+        last_action_id = np.argwhere(last_action==1)
+        last_action[last_action_id] = 0.0
+        last_action[action_space.sym[last_action_id[0][0]]] = 1.0
+        state[-MeleeEnv.action_space.len-1:-1] = last_action
+        
+        state[385] = -state[385]
+        state[388] = -state[388]
+        state[395] = -state[395]
+        state[397] = -state[397]
+        state[399] = -state[399]
+        
+        state[385+399] = -state[385+399]
+        state[388+399] = -state[388+399]
+        state[395+399] = -state[395+399]
+        state[397+399] = -state[397+399]
+        state[399+399] = -state[399+399]
+        
+        return state
+        
+        
+sym_action = np.vectorize( sym_action_b)
+reset_0 = np.vectorize( set_0)
 map_np_state = np.vectorize( get_np_state)
 map_action = np.vectorize( get_action)
 map_done = np.vectorize( get_done)
 map_rew = np.vectorize( get_rew)
 
 
-
-def player2list(s, player_num):
-    array = []
+def loadplayerinfo(s, observation, player_num, order , sym=False):
+    # array = []
     p = s.players[player_num]
-    fields = [
-        np.float32(p.action_frame) / 50.0,
-        [(1.0 if i == p.action_state.value else 0.0) for i in range(383 + 1)],
-        np.float32(p.attack_vel_x),
-        np.float32(p.attack_vel_y),
-        np.float32(p.body_state.value) / 2.0,
-        # p.character.value,
-        np.float32(p.facing),
-        np.float32(p.hitlag) / 1.0,
-        np.float32(p.hitstun) / 1.0,
-        np.float32(p.jumps_used),
-        np.float32(p.on_ground),
-        np.float32(p.shield_size) / 100.0,
-        np.float32(p.percent) / 100.0,
-        np.float32(p.pos_x) / 10.0,
-        np.float32(p.pos_y) / 10.0,
-        np.float32(p.self_air_vel_x) / 1.0,
-        np.float32(p.self_air_vel_y) / 1.0,
-        np.float32(p.speed_ground_x_self) / 1.0,
-    ]
-
-    for f in fields:
-        # onehots
-        if isinstance(f, list):
-            array.extend(f)
-        else:
-            array.append(np.clip(f, -10, 10))
-
-    return array
-
+    if sym:
+        mirror =  -1.0
+    else:
+     mirror = 1.0
+    if order == 0:
+        start_index = 0
+    else:
+        start_index = 401
+    observation[start_index] = np.clip(np.float32(p.action_frame) / 50.0, 0.0, 1.0)
+    observation[start_index + 1: start_index + 1 + (383+1)] = 0.0
+    observation[start_index+1 + p.action_state.value] = 1.0
+    observation[start_index + 1 + (383+1)] = np.clip(np.float32(mirror*p.attack_vel_x)/2.0, -5.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 1] = np.clip(np.float32(p.attack_vel_y) / 2.0, -5.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 2] = np.clip(np.float32(p.body_state.value) / 2.0, 0.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 3] = np.clip(np.float32(mirror*p.facing), -1.0, 1.0)
+    observation[start_index + 1 + (383 + 1) + 4] = np.clip(np.float32(p.hitlag) / 10.0, 0.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 5] = np.clip(np.float32(p.hitstun) / 10.0, 0.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 6] = np.clip(np.float32(p.jumps_used), 0.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 7] = np.clip(np.float32(p.on_ground), 0.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 8] = np.clip(np.float32(p.shield_size) / 100.0, 0.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 9] = np.clip(np.float32(p.percent) / 100.0, 0.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 10] = np.clip(np.float32(mirror*p.pos_x) / 100.0, -5.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 11] = np.clip(np.float32(p.pos_y) / 100.0, -5.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 12] = np.clip(np.float32(mirror*p.self_air_vel_x) / 2.0, -5.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 13] = np.clip(np.float32(p.self_air_vel_y) / 2.0, -5.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 14] = np.clip(np.float32(mirror*p.speed_ground_x_self) / 2.0, -5.0, 5.0)
+    observation[start_index + 1 + (383 + 1) + 15] = np.clip(np.float32(p.charging_smash) / 2.0, 0.0, 5.0)
 
 def state_info2list(s):
     info = [
@@ -107,11 +137,17 @@ def write_with_folder(path, text):
     with open(path, "w") as f:
         f.write(text)
 
-from MeleeEnv import MeleeEnv
-def convertState2Array(state, p1=0, p2=1, last_action_id=0):
-    #last_action = [(np.float32(1.0) if i == last_action_id else np.float32(0.0)) for i in range(MeleeEnv.action_space.len)]
-    #dist = np.sqrt(np.square(state.players[1].pos_x - state.players[0].pos_x) + np.square((state.players[1].pos_y - state.players[0].pos_y)**2))
+def convertState2Array(state, observation, p1=0, p2=1, last_action_id=0, sym=False):
+    if sym:
+        if state.players[p2].pos_x >= 0:
+                sym = False
 
-    array = player2list(state, player_num=p1) + player2list(state, player_num=p2) + state_info2list( state)
-    #print(array)
-    return array
+    dist = np.clip(np.sqrt(np.square((state.players[1].pos_x - state.players[0].pos_x)/100.0) + np.square((state.players[1].pos_y - state.players[0].pos_y)/100.0)), 0.0, 5.0)
+    loadplayerinfo(state, observation, player_num=p1, order=0, sym=sym)
+    loadplayerinfo(state, observation, player_num=p2, order=1, sym=sym)
+    
+    observation[802: 802 + dummy_env.action_space.len] = 0.0
+    observation[802 + last_action_id] = 1.0
+    observation[802 + dummy_env.action_space.len] = dist
+    
+    np.nan_to_num(observation, False)

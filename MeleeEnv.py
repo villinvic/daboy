@@ -10,10 +10,9 @@ ep_length = 60 * 4
 
 
 class MeleeEnv:
-
-        def __init__(self, char='mario'):
-                self.action_space = Pad.Action_Space(char=char)
-                self.observation_space = (800,)
+        action_space = Pad.Action_Space(char='ganon')
+        def __init__(self, char='ganon'):
+                self.observation_space = (803+self.action_space.len,)
 
 
 @dataclass

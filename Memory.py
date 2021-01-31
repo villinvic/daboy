@@ -1,6 +1,6 @@
 import numpy as np
 
-
+# Not used
 class MemoryBuffer:
 
     def __init__(self, obs_shape):

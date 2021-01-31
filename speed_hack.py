@@ -3,15 +3,14 @@
 import enum
 
 template = """
-$Match Setup
-C21B148C 00000025 #BootToMatch.asm
+C21B148C 00000025 #BootToMatch.asm 
 3C608048 60630530
 48000021 7C8802A6
 38A000F0 3D808000
 618C31F4 7D8903A6
 4E800421 480000F8
 4E800021 0808024C
-00000000 000000FF
+20000000 000000FF// 00 20 stock logic
 000000{stage} 00000000
 00000000 00000000
 00000000 FFFFFFFF
@@ -27,7 +26,7 @@ FFFFFFFF 00000000
 400004{cpu1} 00000000
 00000000 3F800000
 3F800000 3F800000
-{char2}{player2}0400 00FF0000
+{char2}{player2}0400 00FF0004
 09007800 400004{cpu2}
 00000000 00000000
 3F800000 3F800000
@@ -44,6 +43,8 @@ FFFFFFFF 00000000
 60000000 00000000
 """
 
+
+
 char_ids = {
     'falcon': 0x0,
     'dk': 0x1,
@@ -57,14 +58,14 @@ char_ids = {
     'marth': 0x9,
     'mewtwo': 0xA,
     'ness': 0xB,
-    'peach': 0xC,
+#    'peach': 0xC,
     'pikachu': 0xD,
-    'ics': 0xE,
+#    'ics': 0xE,
     'puff': 0xF,
     'samus': 0x10,
     'yoshi': 0x11,
-    'zelda': 0x12,
-    'sheik': 0x13,
+#    'zelda': 0x12,
+#    'sheik': 0x13,
     'falco': 0x14,
     'ylink': 0x15,
     'doc': 0x16,
@@ -120,10 +121,10 @@ def byte_str(x):
 def setup_match_code(
         stage='final_destination',
         player1=PlayerStatus.CPU,
-        char1='falcon',
+        char1='ganon',
         cpu1=9,
         player2=PlayerStatus.HUMAN,
-        char2='falcon',
+        char2='ganon',
         cpu2=9,
 ):
     kwargs = dict(

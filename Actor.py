@@ -11,7 +11,7 @@ import Pad as P
 from utils import convertState2Array, make_async
 from rewards import compute_rewards
 from MeleeEnv import *
-from RERPI import CategoricalActor
+from RERPI import CategoricalActor, CategoricalActorShare
 import signal
 
 from os import walk
@@ -29,16 +29,17 @@ class ACAgent(CategoricalActor):
         assert isinstance(state, np.ndarray)
         is_single_state = len(state.shape) == self.state_ndim
 
-        state = state[np.newaxis].astype(
+        state = state[np.newaxis][np.newaxis].astype(
             np.float32) if is_single_state else state
         action = self._get_action_body(tf.constant(state))
 
-        return action.numpy()[0] if is_single_state else action
+        return action.numpy()[0][0] if is_single_state else action
 
     @tf.function
     def _get_action_body(self, state):
         param = self._compute_dist(state)
-        return tf.squeeze(self.dist.sample(param), axis=1)
+        action = tf.squeeze(self.dist.sample(param), axis=1)
+        return action
 
 
 class Actor:
@@ -46,7 +47,7 @@ class Actor:
     def __init__(self, self_play, ckpt_dir, ep_length,
                  dolphin_dir, iso_path, video_backend,
                  actor_id, n_actors, epsilon, n_warmup,
-                 char):
+                 char, test):
                  
         signal.signal(signal.SIGINT, self.exit)
         super().__init__()
@@ -57,19 +58,19 @@ class Actor:
         self.mw_path = dolphin_dir + 'User/MemoryWatcher/MemoryWatcher'
         self.locations = dolphin_dir + 'User/MemoryWatcher/Locations.txt'
         self.pad_path = dolphin_dir + 'User/Pipes/daboy'
-        dolphin_exe = dolphin_dir + 'dolphin-emu-nogui'
+        dolphin_exe = dolphin_dir + 'dolphin-emu'
         print(dolphin_exe, dolphin_dir, self.mw_path, self.pad_path)
 
         #self.setDaemon(True)
         self.id = actor_id
         self.n_actors = n_actors
-        self.dolphin_proc = DolphinInitializer(self.id, dolphin_exe, iso_path, video_backend)
+        self.dolphin_proc = DolphinInitializer(self.id, dolphin_exe, iso_path, video_backend, self.self_play, test)
         self.dolphin_dir = dolphin_dir
         self.action_space = P.Action_Space(char=char)
         self.discrete_action_space = [i for i in range(self.action_space.len)]
         self.shutdown_flag = Event()
         self.steps = 0
-        self.epsilon = 0.
+        self.epsilon = 0.02
         self.current_episode_length = 0
         self.opp_current_episode_length = 0 if self.self_play else None
         env = MeleeEnv(char)
@@ -77,17 +78,17 @@ class Actor:
         # self.policy = Agent(MeleeEnv.observation_space, MeleeEnv.action_space.len, epsilon, units=[512, 256])
         # self.opp = Agent(MeleeEnv.observation_space, MeleeEnv.action_space.len, epsilon,
         #                 units=[512, 256]) if self.self_play else None
-        self.policy = ACAgent(env.observation_space, env.action_space.len, epsilon)
+        self.policy = ACAgent(env.observation_space, 1, ep_length-1, env.action_space.len, epsilon)
         
-        self.opp = ACAgent(env.observation_space, env.action_space.len, epsilon) if self.self_play else None
-        if self.self_play:
-            self.checkpoint = tf.train.Checkpoint(actor=self.opp)
+        #self.opp = ACAgent(env.observation_space, 1, ep_length-1, env.action_space.len, epsilon) if self.self_play else None
+        #if self.self_play:
+        #    self.checkpoint = tf.train.Checkpoint(actor=self.opp)
 
         self.n_warmup = n_warmup
 
-        self.mw = MemoryWatcherZMQ(self.mw_path)
+        self.mw = MemoryWatcherZMQ(self.mw_path, self.id)
         self.state = GameMemory()
-        self.sm = StateManager(self.state)
+        self.sm = StateManager(self.state, test or video_backend != "Null")
         self.pad = [P.Pad(self.pad_path + "_enemy"), P.Pad(self.pad_path)]
         make_async(self.pad)
         self.mm = MenuManager()
@@ -122,11 +123,23 @@ class Actor:
         self.episode_length = ep_length
         self.check_cntr = 0
         self.gru_reset_freq = 2
+        
+        self.init_frame = 0
 
         self.bench = [[], []]
 
+        self.as_scale = 0.01
+        self.ttt = 0
+        self.max_track = 20*60*10
+        self.as_max_ent = np.log(300.0)
+        self.as_tracker_index = 0
+        self.as_tracker = np.array([np.nan for _ in range(self.max_track)])
+
         self.communicate_freq = 60 * 10
         # self.trajectory = Trajectory(ep_length, 1)
+        self.observation = np.zeros(env.observation_space, dtype=np.float32)
+        self.opp_observation = np.zeros(env.observation_space, dtype=np.float32) if self_play else None
+
         self.trajectory = {
             'state': np.array(
                 [np.zeros(env.observation_space, dtype=np.float32) for _ in range(self.episode_length)],
@@ -151,6 +164,14 @@ class Actor:
         self.randomize_opp_freq = 60 * 60
 
         self.restart_freq = 60 * 60 * 60  # every hour
+        
+        self.neg_scale = 0.9
+        self.dist_scale = 0.002
+        self.dmg_scale = 0.01
+        
+        self.max_reward_hist = 10
+        self.reward_hist_checker = np.full((self.max_reward_hist,), np.nan)
+        self.reward_hist_checker_index = 0
 
     def restart(self):
         print('Restarting Actor', self.id)
@@ -176,6 +197,8 @@ class Actor:
 
     def setup_context(self):
         context = zmq.Context()
+        self.alert_socket = context.socket(zmq.PUSH)
+        self.alert_socket.connect("tcp://127.0.0.1:7555")
         self.exp_socket = context.socket(zmq.PUSH)
         self.exp_socket.connect("tcp://127.0.0.1:5557")
         self.blob_socket = context.socket(zmq.SUB)
@@ -210,6 +233,16 @@ class Actor:
     def queue_action(self):
         del self.action_queue[0]
         self.action_queue.append(self.last_action_id)
+
+    def track_as(self, player):
+        self.as_tracker[self.as_tracker_index % self.max_track] = self.state.players[player].action_state.value
+        self.as_tracker_index += 1
+
+    def as_neg_log_likelihood(self, action_state):
+        count = np.count_nonzero(self.as_tracker == action_state)
+        prob = count / float(min([self.as_tracker_index, self.max_track]))
+        res = - np.log(prob + 1e-8) - self.as_max_ent
+        return np.clip(res, 0.0, 8.0)
 
     def update_status_hist(self, p_num, frame_dif, mode="normal"):
         if mode == "normal":
@@ -283,11 +316,16 @@ class Actor:
         flag = 0 if block else zmq.NOBLOCK
         try:
             params = self.blob_socket.recv_pyobj(flag)
-            self.policy.load_params(params)
-            if self.self_play:
-                self.opp.load_params(params)
+            self.policy.load_params(params['weights'])
+            #if self.self_play:
+            #    self.opp.load_params(params['weights'])
+                
+            self.neg_scale = params['neg_scale']
+            self.dist_scale = params['dist_scale']
+            self.dmg_scale = params['dmg_scale']
         except zmq.ZMQError:
-            pass
+            return False
+        return True
 
     def randomize_opp(self):
         checkpoints = []
@@ -307,13 +345,25 @@ class Actor:
             if self.current_episode_length == self.episode_length:
                 if not self.self_play:
                     self.eval_socket.send_pyobj(self.episode_score)
-                    self.episode_score = 0
+                self.reward_hist_checker[self.reward_hist_checker_index%self.max_reward_hist] = self.episode_score
+                if self.reward_hist_checker_index >= self.max_reward_hist:
+                        ok = False
+                        for r in self.reward_hist_checker:
+                                if r != 0 or r != 0.8:
+                                        ok = True
+                                        break
+                        if not r:
+                                print("BUG????, Restarting...")
+                                self.alert_socket.send_pyobj(self.id)
+                        
+                self.reward_hist_checker_index+= 1
+                self.episode_score = 0
                 self.current_episode_length = 0
 
                 # get last params
                 self.update_params()
                 # send trajectory
-                if self.self_play:
+                if self.steps > 20:
                     self.exp_socket.send_pyobj(self.trajectory)
 
                 self.check_cntr += 1
@@ -322,7 +372,7 @@ class Actor:
                 self.opp_current_episode_length = 0
 
                 # send trajectory
-                if self.self_play:
+                if self.self_play and self.steps > 20:
                     self.exp_socket.send_pyobj(self.opp_trajectory)
 
         if (self.current_episode_length + 1) == self.episode_length:
@@ -330,17 +380,17 @@ class Actor:
         return False
 
     def evaluate(self, death_loss=1.0, p1=0, p2=1, mode="normal"):
-        is_off_stage = abs(self.state_queue[-1].players[p2].pos_x) > 60  # fd  60# bf
-        off_stage_kill_bonus = 1.4 if is_off_stage else 1.0
+        # is_off_stage = abs(self.state_queue[-1].players[p2].pos_x) > 60  # fd  60# bf
+        # off_stage_kill_bonus = 1.4 if is_off_stage else 1.0
         done = self.isDead(p2, mode=mode)
-        if done:
-            p = self.state_queue[-1].players[p2].percent
-            if p > 220 :
-                death_loss = 0.2
-            elif p > 100:
-                death_loss *= (250 - p) / 150.0
+        #if done:
+        #    p = self.state_queue[-1].players[p2].percent
+        #    if p > 220:
+        #        death_loss = 0.2
+        #    elif p > 100:
+        #        death_loss *= (250 - p) / 150.0
                 
-        r = int(self.isDead(p1, mode=mode)) * off_stage_kill_bonus - death_loss * int(done)  # Death
+        r = int(self.isDead(p1, mode=mode)) - death_loss * int(done)  # Death
         # r += int(self.isTeching( 1)) * 0.3
         # r -= int(self.isSpecialFalling( 1)) * 0.03F
 
@@ -349,26 +399,33 @@ class Actor:
         else:
             states = self.opp_state_queue[-2:]
 
-        r += compute_rewards(states, p1=p1, p2=p2, damage_ratio=0.01, distance_ratio=0.001,
-                             loss_intensity=0.98)
+        r += compute_rewards(states, p1=p1, p2=p2, damage_ratio=self.dmg_scale, distance_ratio=self.dist_scale,
+                             loss_intensity=self.neg_scale)
+        # action_state bonus
+        if self.as_tracker_index > 0.4 * self.max_track:
+            as_bonus = self.as_neg_log_likelihood(states[0].players[p2].action_state.value) * self.as_scale
+            #if self.id == 0:
+            #    print(as_bonus)
+                
+            r += as_bonus
+        #else:
+        #    r = rr
 
-        return np.float32(r)
-
-    def toNumpyArray(self, state, p1=0, p2=1, last_action_id=0):
-        array = np.array(convertState2Array(state, p1=p1, p2=p2, last_action_id=last_action_id), dtype=np.float32)
-        return array
+        #if self.id == 0:
+        #    print(r - rr)
+        return np.nan_to_num(np.float32(r), True)#, np.float32(rr)
 
     def choose_action(self, state=None, mode="normal", random=False):
         rand = 0.0 if random else np.random.random()
-        self.steps += 1
         if self.n_warmup > self.steps or rand < self.epsilon:
             #  print("random action")
             return np.random.choice(self.action_space.len)
 
         if mode == "normal":
+            self.steps += 1
             return self.policy.get_action(state)
         else:
-            return self.opp.get_action(state)
+            return self.policy.get_action(state)
 
     def store_transition(self, action, np_obs, mode='normal'):
         done = self.check_episode(mode=mode)
@@ -386,18 +443,17 @@ class Actor:
             self.trajectory['action'][self.current_episode_length] = action
             self.trajectory['rew'][self.current_episode_length] = r
             self.current_episode_length += 1
-            if not self.self_play:
-                self.episode_score += r
+            self.episode_score += r
 
 
     def mark_state(self, player):
         self.state_queue[-1].mark[player] = 1
 
-    def get_obs(self, player, delay=0, last_action_id=0):
+    def update_obs(self, player, delay=0, last_action_id=0):
         if player == 1:
-            return self.toNumpyArray(self.state, p1=0, p2=1, last_action_id=last_action_id)
+            convertState2Array(self.state, self.observation, p1=0, p2=1, last_action_id=last_action_id, sym=False)
         else:
-            return self.toNumpyArray(self.state, p1=1, p2=0, last_action_id=last_action_id)
+            convertState2Array(self.state, self.opp_observation, p1=1, p2=0, last_action_id=last_action_id, sym=False)
 
     def advance(self, p1, p2):
         if self.frame_start == -1:
@@ -414,12 +470,22 @@ class Actor:
                     self.queue_state()
 
                     # AI
-                    last_action_id = self.trajectory['action'][self.current_episode_length % self.episode_length]
-                    observation = self.get_obs(p2, last_action_id=last_action_id)
-                    action_id = self.choose_action(observation)
+                    last_action_id = self.trajectory['action'][(self.current_episode_length-1) % self.episode_length]
+                    self.update_obs(p2, last_action_id=last_action_id)
+                    action_id = self.choose_action(self.observation)
+                    self.track_as(p2)
+                    if action_id == self.action_space.len:
+                        print('error action nan ? ', self.id)
+                        action_id = 0
+                        #self.policy.l2.reset_states()
+                     
+                    #if self.state.players[p2].pos_x < 0:
+                    #    action = self.action_space[self.action_space.sym[action_id]]
+                    #else:
                     action = self.action_space[action_id]
-
-                    self.store_transition(action_id, observation)
+                        
+                 
+                    self.store_transition(action_id, deepcopy(self.observation))
 
                     # if wavedashing in air, choose random action
                     # if isinstance(action, list):
@@ -439,13 +505,23 @@ class Actor:
                     """OPP DECISION MAKING"""
                     self.queue_state(mode="opp")
 
-                    last_action_id = self.opp_trajectory['action'][self.opp_current_episode_length % self.episode_length]
-                    observation = self.get_obs(p1, last_action_id=last_action_id)
+                    last_action_id = self.opp_trajectory['action'][(self.opp_current_episode_length-1) % self.episode_length]
+                    self.update_obs(p1, last_action_id=last_action_id)
 
-                    opp_action_id = self.choose_action(observation, mode="opp")
+                    opp_action_id = self.choose_action(self.opp_observation, mode="opp")
+                    self.track_as(p1)
+                    if opp_action_id == self.action_space.len:
+                        print('error action nan ?')
+                        opp_action_id = 0
+                        #self.opp.l2.reset_states()
+                        
+                    #if self.state.players[p1].pos_x < 0:
+                    #    opp_action = self.action_space[self.action_space.sym[opp_action_id]]
+                    #else:
                     opp_action = self.action_space[opp_action_id]
 
-                    self.store_transition(opp_action_id, observation, mode='opp')
+
+                    self.store_transition(opp_action_id, deepcopy(self.opp_observation), mode='opp')
 
                     # if wavedashing in air, choose random action
                     # if isinstance(action, list):
@@ -464,37 +540,22 @@ class Actor:
             t1 = time.time()
             if self.action_list and self.state.frame - self.last_action >= self.last_action_wait:
                 """ACTING"""
-                action = self.action_list[0]
+                action = self.action_list.pop(0)
 
-                self.last_action_wait = action['duration']
-                self.action_list.pop(0)
-                # ban dodges when recovering
-                # if (not self.state.players[p2].on_ground) and abs(self.state.players[p2].pos_x) > 59 and action['L'] == 1:
-                #    P.neutralPad.send_controller(self.pad[p2])
-                # elif abs(self.state.players[p2].pos_x) > 60 and action['B'] == 1 and action['stick'][0] != 0.5 \
-                #    and self.state.players[p2].jumps_used > 1:
-                #    P.neutralPad.send_controller(self.pad[p2])
-
-                action.send_controller(self.pad[p2])
+                self.last_action_wait = action['duration'] 
+                if not action.no_op:
+                                action.send_controller(self.pad[p2])
 
                 self.last_action = self.state.frame
                 self.last_action_id = action['id']
 
             if self.self_play and self.opp_action_list and self.state.frame - self.opp_last_action >= self.opp_last_action_wait:
                 """OPP ACTING"""
-                opp_action = self.opp_action_list[0]
+                opp_action = self.opp_action_list.pop(0)
 
                 self.opp_last_action_wait = opp_action['duration']
-                self.opp_action_list.pop(0)
-                # ban dodges when recovering
-                # if (not self.state.players[p1].on_ground) and abs(self.state.players[p1].pos_x) > 59 and opp_action['L'] == 1:
-                #    P.neutralPad.send_controller(self.pad[p1])
-                # elif abs(self.state.players[p1].pos_x) > 60 and opp_action['B'] == 1 and opp_action['stick'][0] != 0.5 \
-                #    and self.state.players[p1].jumps_used > 1:
-                #    P.neutralPad.send_controller(self.pad[p1])
-
-                # else:
-                opp_action.send_controller(self.pad[p1])
+                if not opp_action.no_op:
+                        opp_action.send_controller(self.pad[p1])
 
                 self.opp_last_action = self.state.frame
                 self.opp_last_action_id = opp_action['id']
@@ -508,7 +569,7 @@ class Actor:
             #    self.bench[1].append(dt2)
 
     def make_action(self, p1, p2):
-        if self.state.menu == S.Menu.Game:
+        if self.state.menu == S.Menu.Game or self.state.menu == S.Menu.Stages:
             if self.game_start:
                 self.game_start = False
                 self.state.frame_start = self.state.frame
@@ -544,32 +605,50 @@ class Actor:
 
     def main_loop(self):
         last_frame = self.state.frame
+        
         res = next(self.mw)
         if res is not None:
             self.sm.handle(res)
+        #print( last_frame, self.state.frame > last_frame, self.init_frame)
+        if self.init_frame < 120 :
+                self.init_frame += 1
 
-
-        if self.state.frame > last_frame:
+        elif self.state.frame > last_frame:
+            self.ttt = 0
+            if last_frame % (60 * 5 * 30) == 0:
+                print(self.id, 'running')
             if self.state.frame - last_frame > 1:
                 print('Actor', self.id, 'skipped', self.state.frame - last_frame, 'frames.')
             self.make_action(0, 1)
+        else :
+                self.ttt += 1
+                if self.ttt > 100:
+                        print('stuck')
+        
 
         self.mw.advance()
 
     def run(self):
         # Copying nn from learner
-        # self.update_params(block=True)
-        # if self.self_play:
+        self.dolphin_proc.run()
+        tries = 15
+        # test
+        act = self.policy.get_action(self.observation)
+        # print(act)
+        #if self.self_play:
+        #    act = self.opp.get_action(self.get_obs(1))
+            
+        if self.id == 0:
+                print('getting params from learner...')
+        for _ in range(tries):
+                if self.update_params():
+                        break
+                time.sleep(1)
+
+        #if self.self_play:
         #    self.randomize_opp()
         #    act2 = self.opp.get_action(self.get_obs(0))
-        # test
-        act = self.policy.get_action(self.get_obs(1))
-        print(act)
-        print(act)
-        if self.self_play:
-            act = self.opp.get_action(self.get_obs(1))
         # Start bounded dolphin process
-        self.dolphin_proc.run()
 
         # wait dolphin
         time.sleep(2)

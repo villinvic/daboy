@@ -3,6 +3,7 @@ import Pad
 from time import sleep
 from movie import Movie, tapA, endless_play, stages, lvl9, color
 from State import Character
+import numpy as np
 
 characters = dict(
     fox=(-23.5, 11.5),
@@ -10,15 +11,15 @@ characters = dict(
     falcon=(18, 18),
     roy=(18, 5),
     marth=(11, 5),
-    zelda=(11, 11),
-    sheik=(11, 11),
+    #zelda=(11, 11),
+    #sheik=(11, 11),
     mewtwo=(-2, 5),
     luigi=(-16, 18),
     mario=(-23.5, 17),
     doc=(-30.5, 17),
     puff=(-10, 5),
     kirby=(-2, 11),
-    peach=(-2, 18),
+    #peach=(-2, 18),
     ganon=(23, 17),
     samus=(3, 11),
     bowser=(-9, 19),
@@ -122,7 +123,7 @@ class MenuManager:
         self.locator = None
         self.actions = Sequential([])
 
-    def setup_move(self, pad, player, char='mario', cpu=True):
+    def setup_move(self, pad, player, char='ganon', cpu=True):
         opp = 0
         locator = locateCSSCursor(player)
         opp_locator = locateCSSCursor(opp)
@@ -137,8 +138,8 @@ class MenuManager:
             actions.append(Movie(tapA, pad[0]))
             actions.append(Movie(lvl9, pad[0]))
             actions.append(Movie(tapA, pad[0]))
-
-            actions.append(MoveTo(characters[char], opp_locator, pad[0]))
+            char2 = np.random.choice(list(characters.keys()))
+            actions.append(MoveTo(characters[char2], opp_locator, pad[0]))
             actions.append(Movie(tapA, pad[0]))
 
         else:

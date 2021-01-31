@@ -1,6 +1,5 @@
 import binascii
 import zmq
-from utils import write_with_folder
 import socket
 import os
 
@@ -30,15 +29,21 @@ class MemoryWatcherZMQ:
     normal iterator.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, _id):
         self.path = path
+        self.id = _id
         self.messages = None
+        self.exited = False
 
         #write_with_folder(self.path, '5555')
 
         context = zmq.Context()
+        self.alert_socket = context.socket(zmq.PUSH)
+        self.alert_socket.connect("tcp://127.0.0.1:7555")
         self.socket = context.socket(zmq.REP)
         self.socket.bind("ipc://" + path)
+        self.socket.setsockopt(zmq.RCVTIMEO, 10000)
+        self.socket.setsockopt(zmq.LINGER, 0)
 
     def __exit__(self, *args):
         """Closes the socket."""
@@ -67,12 +72,17 @@ class MemoryWatcherZMQ:
                 message = message.decode('utf-8')
                 self.messages = parseMessage(message)
             except zmq.ZMQError as e:
-                print(e)
+                if not self.exited :
+                        self.alert_socket.send_pyobj(self.id)
+                
 
         return self.messages
 
     def advance(self):
-        self.socket.send(b'')
+        try:
+                self.socket.send(b'')
+        except zmq.ZMQError:
+                pass
         self.messages = None
         
         

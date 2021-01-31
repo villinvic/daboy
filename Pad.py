@@ -1,8 +1,9 @@
 import enum
 import zmq
-from utils import write_with_folder
+import numpy as np
 import os
 import sys
+from copy import deepcopy
 
 @enum.unique
 class UsefullButton(enum.Enum):
@@ -60,6 +61,37 @@ class ControllerState(dict):
         self['duration'] = duration
         self['id'] = None
         self['ac'] = ac
+        self.no_op = False
+        
+    def copy(self, other):
+        for item in UsefullButton:
+            self[item.name] = other[item.name]
+
+        self['stick'] = other['stick']
+        self['c_stick'] = other['c_stick']
+        self['duration'] = other['duration']
+        self['id'] = None
+        self['ac'] = other['ac']
+        
+    def egals(self,  other):
+
+        for item in UsefullButton:
+            if self[item.name] != other[item.name]:
+                return False
+                
+        
+        return self['stick'][1] == other['stick'][1] and\
+        abs(self['stick'][0] - other['stick'][0]) < 0.001 and\
+        self['c_stick'] == other['c_stick'] and\
+        self['duration'] == other['duration'] and\
+        self['ac'] == other['ac']
+        
+    def sym_state(self):
+        sym = ControllerState()
+        sym.copy(self)
+        sym['stick'] = (abs(self['stick'][0] - 1.0), self['stick'][1])
+        sym['c_stick'] = (abs(self['c_stick'][0] - 1.0), self['c_stick'][1])
+        return sym
 
     def __str__(self):
 
@@ -109,6 +141,31 @@ class Action_Space(dict):
             cs['id'] = self.len
         self[self.len] = cs
         self.len += 1
+        
+    def build_sym(self):
+        self.sym = dict()
+        for i in range(self.len):
+            action = self[i]
+            if isinstance(action, list): # suppose chain action has no x component
+                self.sym[i] = i
+            
+            else:
+                sym = action.sym_state()
+                sym['id'] = i
+                
+                if sym.egals(action):
+                    self.sym[i] = i
+                else:
+                    #print(sym)
+                    
+                    for j in range(self.len):
+                        if j != i:
+                            action2 = self[j]
+                            if not isinstance(action2, list):
+                                if sym.egals(action2):
+                                    self.sym[i] = j
+                                    break
+                                    
 
     def __init__(self, char='mario'):
         dict.__init__(self)
@@ -147,25 +204,13 @@ class Action_Space(dict):
 
         for s_state in self.stick_states:
             for item in UsefullButton:
-                if not item.name == 'Z' and not item.name == 'X' \
-                        and not (item.name == 'L' and s_state[1] > 0.5):
-                    self.add(ControllerState(button=item.name, stick=s_state))
+                self.add(ControllerState(button=item.name, stick=s_state))
 
-            # for sc_state in self.smash_states:
-            #    if s_state != (0.5, 1.0):
-            #        self.add(ControllerState(stick=s_state, c_stick=sc_state))
+            for sc_state in self.smash_states:
+                self.add(ControllerState(stick=s_state, c_stick=sc_state))
 
             # no button
             self.add(ControllerState(stick=s_state))
-
-        # Up_air no jump
-        self.add(ControllerState(c_stick=(0.5, 1.0)))
-
-        # simple x
-        self.add(ControllerState(button='X', duration=sh_dict[char]))
-
-        for s_state in self.stick_states_upB:
-            self.add(ControllerState(button='B', stick=s_state))
 
         # Specific techs:
 
@@ -175,9 +220,8 @@ class Action_Space(dict):
             self.add(ControllerState(button='A', stick=s_state))
 
         # WAVE LAND
-
-        self.add(ControllerState(button='L', stick=(0.2, 0.3), duration=4))
-        self.add(ControllerState(button='L', stick=(0.8, 0.3), duration=4))
+        self.add(ControllerState(button='L', stick=(0.2, 0.3), duration=3))
+        self.add(ControllerState(button='L', stick=(0.8, 0.3), duration=3))
 
         # shield grab
         sg = ControllerState(button='L')
@@ -189,27 +233,23 @@ class Action_Space(dict):
         grab = ControllerState(button='Z', ac=True)
         jgrab = [jump1, grab]
         self.add(jgrab)
+        
+        no_op = ControllerState()
+        no_op.no_op = True
+        self.add(no_op)
 
-        # PERFECT DOWN B
-        down_b_start = ControllerState(button='B', stick=(0.5, 0.0), duration=6)
-        down_b_left = ControllerState(button='B', stick=(0.0, 0.5), duration=2)
-        down_b_right = ControllerState(button='B', stick=(1.0, 0.5), duration=2)
-        down_b_left_interrupt = ControllerState(stick=(0.0, 0.5), duration=2)
-        down_b_right_interrupt = ControllerState(stick=(1.0, 0.5), duration=2)
-        end = ControllerState(duration=1)
 
-        perfect_down_b_left = [down_b_start] + [down_b_left_interrupt, down_b_left] * 10 + [end]
-        perfect_down_b_right = [down_b_start] + [down_b_right_interrupt, down_b_right] * 10 + [end]
-
-        # self.add( perfect_down_b_left)
-        # self.add( perfect_down_b_right)
+        self.build_sym()
 
         # for i in range(self.len):
         #    if isinstance(self[i], list):
         #        print(i, self[i][0])
         #    else:
         #        print(i, self[i])
-        print("Action_space dim:", self.len)
+        print("Action_space :", self.len)
+        # print(self.sym)
+        
+        
 
 
 class Pad:
@@ -219,14 +259,9 @@ class Pad:
         """Create, but do not open the fifo."""
         self.pipe = None
         self.path = path
-        #self.context = zmq.Context()
         self.message = ""
         self.action_space = []
 
-        #write_with_folder(self.path, str(self.port))
-
-        #self.socket = self.context.socket(zmq.PUSH)
-        #self.socket.bind("tcp://127.0.0.1:%d" % self.port)
         
         
     def connect(self):
@@ -238,18 +273,14 @@ class Pad:
         os.mkfifo(self.path)
 
         self.pipe = open(self.path, 'w', buffering=1)
-        #print('pad connected')
-        #sys.exit()
 
     def __exit__(self, *args):
         pass
         
     def unbind(self):
-        #self.socket.unbind("tcp://127.0.0.1:%d" % self.port)
         self.pipe.close()
 
     def flush(self):
-        #self.socket.send_string(self.message)
         self.pipe.write(self.message)
         self.message = ""
 
@@ -261,24 +292,24 @@ class Pad:
     def press_button(self, button, buffering=False):
         """Press a button."""
         assert button in Button or button in UsefullButton
-        self.write('PRESS {}\n'.format(button.name), buffering)
+        self.write('PRESS {}'.format(button.name), buffering)
 
     def release_button(self, button, buffering=False):
         """Release a button."""
         assert button in Button or button in UsefullButton
-        self.write('RELEASE {}\n'.format(button.name), buffering)
+        self.write('RELEASE {}'.format(button.name), buffering)
 
     def press_trigger(self, trigger, amount, buffering=False):
         """Press a trigger. Amount is in [0, 1], with 0 as released."""
         assert trigger in Trigger or trigger in UsefullButton
         assert 0 <= amount <= 1
-        self.write('SET {} {:.2f}\n'.format(trigger.name, amount), buffering)
+        self.write('SET {} {:.2f}'.format(trigger.name, amount), buffering)
 
     def tilt_stick(self, stick, x, y, buffering=False):
         """Tilt a stick. x and y are in [0, 1], with 0.5 as neutral."""
         assert stick in Stick
         assert 0 <= x <= 1 and 0 <= y <= 1
-        self.write('SET {} {:.2f} {:.2f}\n'.format(stick.name, x, y), buffering)
+        self.write('SET {} {:.2f} {:.2f}'.format(stick.name, x, y), buffering)
 
     def reset(self):
         for button in Button:

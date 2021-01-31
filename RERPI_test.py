@@ -3,6 +3,9 @@ import gym
 from Memory import MemoryBuffer
 import datetime
 
+"""
+Testing RL algos with gym api
+"""
 
 class Test:
 

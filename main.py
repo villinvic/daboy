@@ -1,5 +1,5 @@
 from Default import Default, Option
-from Learner import Learner, ACLearner
+from Learner import ACLearner
 from Actor import Actor
 from ReplayBuffer import ReplayBuffer
 import RERPI
@@ -10,43 +10,22 @@ from threading import Event
 from MeleeEnv import MeleeEnv
 import os
 import time
-import signal
 from argparse import ArgumentParser
 import tensorflow as tf
 import pickle
-from subprocess import Popen
 from sys import stdout
 import psutil
 
 
-#Cudnn fix ...
+#cudNN fix
 physical_devices = tf.config.list_physical_devices('GPU')
 tf.config.experimental.set_memory_growth(physical_devices[0], enable=True)
-
-
-# TODO
-# Move state and reward computation to actors ( convert trajectories to dicts)
-# Concat trajectories for bigger batch size
-
-# action embedding
-# higher stock reward if high percent
-# light l press
-# twitch bot, listener on learner side
-# reset actor every n mins : reset sockets ?
-# separate actor and learner threads (find new way to track eval (socket ?))
-# logger ?
-# gui
-# gae ?
-# longer episodes ?
-# increase reward if hit when in hitlag (combo reward)
-# speedhack ?
 
 
 class Main(Default):
     _options = [
         Option('learning_rate', type=float, default=1e-4),
         Option('discount_factor', type=float, default=0.994),
-        Option('batch_size', type=int, default=256),
         Option('file_name', type=str, default='models\\model.h5',
                help="path to which the checkpoint will be loaded/saved"),
         Option('optimizer', type=str, default="GradientDescent", help="which tf optimizer to use"),
@@ -57,7 +36,6 @@ class Main(Default):
         # port 5556 is buggy ?
         Option('pad_port', type=int, default=5560),
         Option('n_actors', type=int, default=1),
-        Option('loss', type=str, default='mse'),
         Option('layer_size', type=int, default=256),
         Option('dolphin_dir', type=str, default='../dolphin/'),
         Option('iso_path', type=str, default=r'../isos/melee.iso'),
@@ -71,14 +49,20 @@ class Main(Default):
         Option('render_all', action="store_true"),
         Option('render_none', action="store_true"),
         Option('load_memory', action="store_true"),
-        Option('epsilon', type=float, default=0.01),
+        Option('epsilon', type=float, default=0.02),
         Option('gae_lambda', type=float, default=1.0),
-        Option('alpha', type=float, default=7e-4),
-        Option('ep_length', type=int, default=20 * 5),
+        Option('alpha', type=float, default=6e-4),
+        Option('ep_length', type=int, default=20*20+1),
         Option('generate_exp', action='store_true'),
         Option('mode', choices=['learner', 'actor', 'both'], default='both'),
         Option('eval', action='store_true'),
         Option('char', type=str, default='ganon'),
+        Option('batch_size', type=int, default=8),
+
+        Option('neg_scale', type=float, default=0.9),
+        Option('dist_scale', type=float, default=0.01),
+        Option('dmg_scale', type=float, default=0.01),
+        
     ]
 
     _members = [
@@ -100,6 +84,11 @@ class Main(Default):
         self.dolphin_exe = self.dolphin_dir + 'dolphin-emu-nogui'
 
         if self.mode['learner']:
+            params = {  'neg_scale': self.neg_scale,
+                        'dist_scale': self.dist_scale,
+                        'dmg_scale': self.dmg_scale
+                     }
+                     
             dummy_env = MeleeEnv(self.char)
             self.action_space = dummy_env.action_space
             state_shape = dummy_env.observation_space
@@ -110,11 +99,11 @@ class Main(Default):
 
             self.net = RERPI.AC(state_shape=state_shape, action_dim=self.action_space.len, epsilon_greedy=self.epsilon,
                                 lr=self.learning_rate, gamma=self.discount_factor, entropy_scale=self.alpha, gae_lambda=self.gae_lambda, gpu=0,
-                                traj_length=self.ep_length)
+                                traj_length=self.ep_length, batch_size=self.batch_size, neg_scale=self.neg_scale)
 
 
             # Save and restore model
-            self.checkpoint = tf.train.Checkpoint(policy=self.net, actor=self.net.policy)
+            self.checkpoint = tf.train.Checkpoint(net=self.net, actor=self.net.policy)
             self.checkpoint_manager = tf.train.CheckpointManager(
                 self.checkpoint, directory=self.output_dir, max_to_keep=10)
 
@@ -123,14 +112,12 @@ class Main(Default):
                 path_ckpt = tf.train.latest_checkpoint(self.output_dir)
                 status = self.checkpoint.restore(path_ckpt).expect_partial()
                 status.assert_existing_objects_matched()
-                # status.assert_consumed()
+                #status.assert_consumed()
                 print("Restored {}".format(path_ckpt))
                 self.net.policy.epsilon.assign(self.epsilon)
                 self.net.entropy_scale.assign(self.alpha)
 
-            # if self.load_memory or self.load_checkpoint:
-            #    self.load_mem()
-            self.learner = ACLearner(self.net, self.checkpoint_manager, self.ep_length)
+            self.learner = ACLearner(self.net, self.checkpoint_manager, self.ep_length, params, self.batch_size)
 
         if self.mode['actor']:
             if self.render_none:
@@ -218,7 +205,6 @@ class Main(Default):
 
 
 def find_procs_by_name(name):
-    "Return a list of processes matching 'name'."
     ls = []
     for p in psutil.process_iter(["name", "exe", "cmdline"]):
         if name == p.info['name'] or \

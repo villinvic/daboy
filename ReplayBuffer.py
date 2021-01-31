@@ -3,6 +3,7 @@ from MeleeEnv import Transition, Trajectory, MeleeEnv
 from typing import *
 
 
+# Not used
 class ReplayBuffer:
     def __init__(self, max_size, traj_length):
         self.mem_size = max_size

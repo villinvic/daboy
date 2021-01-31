@@ -67,12 +67,15 @@ def add_address(x, y):
 class StateManager:
     """Converts raw memory changes into attributes in a State object."""
 
-    def __init__(self, state):
+    def __init__(self, state, test=False):
         """Pass in a State object. It will have its attributes zeroed."""
         self.state = state
         self.addresses = {}
 
-        self.addresses['804D7420'] = int_handler(self.state, 'frame')
+        if test:
+            self.addresses['804D7420'] = int_handler(self.state, 'frame')
+        else:
+            self.addresses['804d6cf4'] = int_handler(self.state, 'frame') # slippi
         self.addresses['80479D30'] = int_handler(self.state, 'menu', 0, 0xFF, Menu, Menu.Characters)
         self.addresses['804D6CAC'] = int_handler(self.state, 'stage', 8, 0xFF, Stage, Stage.Unselected)
 
@@ -110,7 +113,7 @@ class StateManager:
             self.addresses[data_pointer + ' 20CC'] = int_handler(player, 'action_counter', 16, 0xFFFF)
             self.addresses[data_pointer + ' 23A0'] = float_handler(player, 'hitstun')
             self.addresses[data_pointer + ' 19F8'] = float_handler(player, 'shield_size')
-            self.addresses[data_pointer + ' 2174'] = int_handler(player, 'charging_smash')  # , 0, 0x2)
+            self.addresses[data_pointer + ' 2174'] = int_handler(player, 'charging_smash', 0, 0x2)
             self.addresses[data_pointer + ' 19C8'] = int_handler(player, 'jumps_used', 24, 0xFF)
             self.addresses[data_pointer + ' 19EC'] = int_handler(player, 'body_state', 0, 0xFF, BodyState,
                                                                  BodyState.Normal)

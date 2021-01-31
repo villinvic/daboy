@@ -1,7 +1,8 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Dense, Reshape, GRU
+from tensorflow.keras.layers import Dense, Reshape, GRU, BatchNormalization
 import numpy as np
 import copy
+from tensorflow.keras.activations import relu
 
 
 class Distribution(object):
@@ -65,7 +66,8 @@ class Categorical(Distribution):
         # NOTE: input to `tf.random.categorical` is log probabilities
         # For more details, see https://www.tensorflow.org/versions/r2.0/api_docs/python/tf/random/categorical
         # [probs.shape[0], 1]
-        return tf.random.categorical(tf.math.log(probs), amount)
+        #tf.print(probs, tf.math.log(probs), tf.random.categorical(tf.math.log(probs), amount), summarize=-1)
+        return tf.cast(tf.map_fn( lambda p: tf.cast(tf.random.categorical(tf.math.log(p), amount), tf.float32),  probs), tf.int64)
 
     def entropy(self, param):
         probs = param["prob"]
@@ -73,7 +75,7 @@ class Categorical(Distribution):
 
 
 class CategoricalActor(tf.keras.Model):
-    def __init__(self, state_shape, action_dim, epsilon,
+    def __init__(self, state_shape, batch_size, traj_length, action_dim, epsilon,
                  name="CategoricalActor"):
         super().__init__(name=name)
         self.dist = Categorical(dim=action_dim)
@@ -81,31 +83,34 @@ class CategoricalActor(tf.keras.Model):
         self.state_ndim = len(state_shape)
         self.epsilon = tf.Variable(epsilon, name="Actor_epsilon", trainable=False, dtype=tf.float32)
 
-        self.l1 = Dense(128, activation='relu', dtype='float32', name="L1")
-        self.r = Reshape((1, 128))
-        self.l2 = GRU(128, time_major=True, stateful=True, return_sequences=True)
-        self.r2 = Reshape((128,))
+        self.l1 = Dense(128, activation='elu', dtype='float32', name="critic_L1")
+        #self.l2 = GRU(512, time_major=False, dtype='float32', stateful=True, return_sequences=True)
+        self.l2 = Dense(128, activation='elu', dtype='float32', name="L2")
+        # self.l3 = Dense(128, activation='elu', dtype='float32', name="L3")
         # self.l2 = Dense(128, activation='relu', dtype='float32', name="L2")
-        self.prob = Dense(action_dim, name="prob", activation="softmax")
+        self.prob = Dense(action_dim, dtype='float32', name="prob", activation="softmax")
 
         # test
-        self(tf.constant(
-            np.zeros(shape=(1,) + state_shape, dtype=np.float32)))
+        #self(tf.constant(
+        #    np.zeros(shape=(None, None,) + state_shape, dtype=np.float32))) # Batch, traj
+            
+        tf.print((batch_size, traj_length,) + state_shape)
 
     def get_params(self):
-        return self.get_weights()
-        # return {
-        #    "weights" : self.get_weights()
-        # }
+        return {
+           "weights" : self.get_weights()
+        }
 
     def load_params(self, params):
-        self.set_weights(params)
+        try:
+            self.set_weights(params)
+        except Exception: # Sometimes fail at beginning of training, tensor not fully initialized ?
+            pass
 
     def _compute_feature(self, states):
         features = self.l1(states)
-        features = self.r(features)
         features = self.l2(features)
-        return self.r2(features)
+        return features
 
     def _compute_dist(self, states):
         """
@@ -129,6 +134,129 @@ class CategoricalActor(tf.keras.Model):
         :return log_probs (tf.Tensor): Tensors of log probabilities of selected actions
         """
         param = self._compute_dist(states)
+
+        action = tf.squeeze(self.dist.sample(param), axis=2)  # (size,)
+
+        log_prob = self.dist.log_likelihood(
+            tf.one_hot(indices=action, depth=self.action_dim), param)
+
+        return action, log_prob, param
+
+    def get_probs(self, states):
+        return self._compute_dist(states)["prob"]
+
+    def compute_entropy(self, states):
+        param = self._compute_dist(states)
+        return self.dist.entropy(param)
+
+    def compute_log_probs(self, states, actions):
+        """Compute log probabilities of inputted actions
+
+        :param states (tf.Tensor): Tensors of inputs to NN
+        :param actions (tf.Tensor): Tensors of NOT one-hot vector.
+            They will be converted to one-hot vector inside this function.
+        """
+        param = self._compute_dist(states)
+        actions = tf.one_hot(
+            indices=tf.squeeze(actions),
+            depth=self.action_dim)
+        param["prob"] = tf.cond(
+            tf.math.greater(tf.rank(actions), tf.rank(param["prob"])),
+            lambda: tf.expand_dims(param["prob"], axis=0),
+            lambda: param["prob"])
+        actions = tf.cond(
+            tf.math.greater(tf.rank(param["prob"]), tf.rank(actions)),
+            lambda: tf.expand_dims(actions, axis=0),
+            lambda: actions)
+        log_prob = self.dist.log_likelihood(actions, param)
+        return log_prob
+
+    def get_action(self, state):
+        # assert isinstance(state, np.ndarray)
+        is_single_state = len(state.shape) == self.state_ndim
+
+        state = state[np.newaxis].astype(
+            np.float32) if is_single_state else state
+        action, prob = self._get_action_body(state)
+
+        return action.numpy()[0], prob if is_single_state else action, prob
+
+    @tf.function
+    def _get_action_body(self, state):
+        param = self._compute_dist(state)
+        action = tf.squeeze(self.dist.sample(param), axis=1)[0]
+        prob = param[action]
+        return action, prob
+
+class CategoricalActorShare(tf.keras.Model):
+    def __init__(self, state_shape, batch_size, action_dim, epsilon,
+                 name="CategoricalActor"):
+        super().__init__(name=name)
+        self.dist = Categorical(dim=action_dim)
+        self.action_dim = action_dim
+        self.state_ndim = len(state_shape)
+        self.epsilon = tf.Variable(epsilon, name="Actor_epsilon", trainable=False, dtype=tf.float32)
+
+        self.l1 = Dense(128, activation='elu', dtype='float32', name="L1")
+        #self.r = Reshape((1,)+state_shape)
+        #self.l2 = GRU(512, dtype='float32', stateful=True, return_sequences=True) # time_major false
+        self.l2 = Dense(128, activation='elu', dtype='float32', name="L2")
+        self.l3 = Dense(128, activation='elu', dtype='float32', name="L3")
+        #self.r2 = Reshape((512,))
+
+        #  heads
+        self.prob = Dense(action_dim, name="prob", activation="softmax")
+        self.v = Dense(1, name="v", activation='linear')
+
+        # test
+        #self._compute_all(tf.constant(
+        #    np.zeros(shape=(batch_size,) + state_shape, dtype=np.float32)))
+
+    def get_params(self):
+        return {
+           "weights" : self.get_weights()
+        }
+
+    def load_params(self, params):
+        self.set_weights(params)
+
+    def _compute_feature(self, states):
+        #features = self.r(states)
+        features = self.l1(states)
+        features = self.l2(features)
+        #features = self.r2(features)
+        return self.l3(features)
+
+    def _compute_dist(self, states):
+        """
+        Compute categorical distribution
+
+        :param states (np.ndarray or tf.Tensor): Inputs to neural network.
+            NN outputs probabilities of K classes
+        :return: Categorical distribution
+        """
+        features = self._compute_feature(states)
+
+        probs = self.prob(features) * (1.0 - self.epsilon) + self.epsilon / np.float32(self.action_dim)
+
+        return {"prob": probs}
+
+
+    def _compute_all(self, states):
+        features = self._compute_feature(states)
+
+        probs = self.prob(features) * (1.0 - self.epsilon) + self.epsilon / np.float32(self.action_dim)
+        value = self.v(features)
+        return {"prob": probs, "value": value}
+
+    def call(self, states):
+        """
+        Compute actions and log probability of the selected action
+
+        :return action (tf.Tensors): Tensor of actions
+        :return log_probs (tf.Tensor): Tensors of log probabilities of selected actions
+        """
+        param = self._compute_all(states)
 
         action = tf.squeeze(self.dist.sample(param), axis=1)  # (size,)
 
@@ -215,49 +343,70 @@ class V(tf.keras.Model):
         to   Q: S -> R^|A|
     """
 
-    def __init__(self, state_shape, name='vf'):
+    def __init__(self, state_shape, batch_size, traj_length, name='vf'):
         super().__init__(name=name)
 
-        self.l1 = Dense(128, name="L1", activation='relu')
-        self.r = Reshape((1, 128))
-        self.l2 = GRU(128, time_major=True, stateful=True, return_sequences=True)
-        self.r2 = Reshape((128,))
-        # self.l2 = Dense(128, activation='relu', dtype='float32', name="L2")
-        self.l3 = Dense(1, name="L3", activation='linear')
+        self.l1 = Dense(128, activation='elu', dtype='float32', name="v_L1")
+        #self.l2 = GRU(512, time_major=False, stateful=True, return_sequences=True)
+        self.l2 = Dense(128, activation='elu', dtype='float32', name="L2")
+        # self.l3 = Dense(128, activation='elu', dtype='float32', name="L3")
+        self.v = Dense(1, activation='linear', dtype='float32', name="v")
 
         dummy_state = tf.constant(
-            np.zeros(shape=(1,) + state_shape, dtype=np.float32))
-        self(dummy_state)
+            np.zeros(shape=(batch_size, traj_length,) + state_shape, dtype=np.float32))
+        #self(dummy_state)
 
     def call(self, states):
         features = self.l1(states)
-        features = self.r(features)
         features = self.l2(features)
-        features = self.r2(features)
-        value = self.l3(features)
-
+        # features = self.l3(features)
+        value = self.v(features)
         return value
+        
+        
+class Predictor(tf.keras.Model):
+    def __init__(self, state_shape, batch_size, traj_length, name='vf'):
+        super().__init__(name=name)
+
+        self.l1 = Dense(256, activation='elu', dtype='float32', name="L1")
+        self.l2 = GRU(512, time_major=False, stateful=True, return_sequences=True)
+        
+        self.l3 = Dense(state_shape[0], activation='linear', dtype='float32', name="L3")
+
+        dummy_state = tf.constant(
+            np.zeros(shape=(batch_size, traj_length,) + state_shape, dtype=np.float32))
+        #self(dummy_state)
+
+    def call(self, states):
+        features = self.l2(states)
+        features = self.l1(features)
+        states_ = self.l3(features)
+
+        return states_
 
 
 class AC(tf.keras.Model):
-    def __init__(self, state_shape, action_dim, epsilon_greedy, lr, gamma, entropy_scale, gae_lambda, gpu=0, traj_length=1,
-                 name='AC'):
+    def __init__(self, state_shape, action_dim, epsilon_greedy, lr, gamma, entropy_scale, gae_lambda, gpu=0, traj_length=1, batch_size=1, neg_scale=1.0,
+                 train_predict=False, name='AC'):
         super().__init__(name=name)
         self.state_shape = state_shape
         self.action_dim = action_dim
+        self.batch_size = batch_size
         self.gamma = gamma
-        self.gae_lambda = tf.expand_dims(
-            tf.Variable(np.array([gae_lambda for _ in range(traj_length - 1)]), dtype=tf.float32, trainable=False), axis=1)
+        self.neg_scale = neg_scale
+        self.train_predictor = train_predict
+        self.gae_lambda = tf.Variable(gae_lambda, dtype=tf.float32, trainable=False)
         self.epsilon = tf.Variable(0.001, dtype=tf.float32, trainable=False)
 
-        self.V = V(state_shape)
-        self.policy = CategoricalActor(state_shape, action_dim, epsilon_greedy)
-        self.V_optim = tf.keras.optimizers.Adam(learning_rate=lr * 0.5, beta_1=0.9, beta_2=0.98, epsilon=1e-8)
-        self.p_optim = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.9, beta_2=0.98, epsilon=1e-8)
-        self.ent_optim = tf.keras.optimizers.Adam(learning_rate=lr * 0.1, beta_1=0.9, beta_2=0.98, epsilon=1e-8)
-
+        self.V = V(state_shape, batch_size, traj_length)
+        self.policy = CategoricalActor(state_shape, batch_size, traj_length-1, action_dim, epsilon_greedy)
+        self.predictor = Predictor(state_shape, batch_size-1, traj_length)
+        #self.ac = CategoricalActorShare(state_shape, action_dim, epsilon_greedy)
+        self.p_optim = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.9, epsilon=1e-8)
+        #self.ent_optim = tf.keras.optimizers.Adam(learning_rate=lr * 0.1, beta_1=0.9, beta_2=0.98, epsilon=1e-8)
+        self.optim = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.9, epsilon=1e-8)
         self.step = tf.Variable(0, dtype=tf.int32)
-        self.batch_size = tf.Variable(traj_length - 1, dtype=tf.int32, trainable=False)
+        self.traj_length = tf.Variable(traj_length - 1, dtype=tf.int32, trainable=False)
 
         self.device = "/gpu:{}".format(gpu) if gpu >= 0 else "/cpu:0"
 
@@ -267,90 +416,130 @@ class AC(tf.keras.Model):
                                          constraint=tf.keras.activations.relu)
         self.max_entropy = tf.Variable(3.6, trainable=False, dtype=tf.float32)
         self.target_entropy = tf.Variable(2.0, trainable=False, dtype=tf.float32)
+        
 
-    def train(self, states, actions, rewards, dones):
+    def train(self, states, actions, rewards, dones, fake=False):
         # do some stuff with arrays
 
         # print(states, actions, rewards, dones)
+        if tf.reduce_any(tf.math.is_nan(states)):
+                print(list(states))
+                states = tf.where(tf.math.is_nan(states), tf.zeros_like(states), states)
 
-        policy_loss, std_error, mean_entropy, min_entropy, max_entropy, rew_ent_diff, min_logp, max_logp \
+        v_loss, total_loss, mean_entropy, min_entropy, max_entropy, min_logp, max_logp \
             = self._train(states, actions, rewards, dones)
 
-        tf.summary.scalar(name=self.name + "/policy_loss", data=policy_loss)
-        tf.summary.scalar(name=self.name + "/std", data=std_error)
+        tf.summary.scalar(name=self.name + "/v_loss", data=v_loss)
+        tf.summary.scalar(name=self.name + "/predict_loss", data=total_loss)
         tf.summary.scalar(name=self.name + "/min_entropy", data=min_entropy)
         tf.summary.scalar(name=self.name + "/max_entropy", data=max_entropy)
-        tf.summary.scalar(name=self.name + "/rew_ent_diff", data=rew_ent_diff)
+        tf.summary.scalar(name=self.name + "/mean_entropy", data=mean_entropy)
         tf.summary.scalar(name=self.name + "/ent_scale", data=self.entropy_scale)
         tf.summary.scalar(name="logp/min_logp", data=min_logp)
         tf.summary.scalar(name="logp/max_logp", data=max_logp)
-
-        return mean_entropy
+        tf.summary.scalar(name="misc/distance", data=tf.reduce_mean(states[:, :, -1]))
+        
 
     @tf.function
     def _train(self, states, actions, rewards, dones):
         with tf.device(self.device):
             not_dones = tf.expand_dims(1. - tf.cast(dones, dtype=tf.float32), axis=1)
             # rewards = tf.expand_dims(rewards, axis=1)
+            
             actions = tf.cast(actions, dtype=tf.int32)
-
+            #rewards = tf.reshape( rewards, (self.traj_length, self.batch_size))
+            #states = tf.reshape( states, (self.traj_length+1, self.batch_size,)+self.state_shape)
             with tf.GradientTape() as tape:
                 v_all = self.V(states)
-                v = v_all[:-1]
-                last_v = v_all[-1]
-                self.V.l2.reset_states()
+                #v_all = tf.reshape( v_all, (self.traj_length+1, self.batch_size, 1))
+                v = v_all[:, :-1, 0]
+                last_v = v_all[:, -1, 0]
                 targets = self.compute_gae(v, rewards, last_v)
                 advantage = tf.stop_gradient(targets) - v
-                # v_next = v_all[1:]
-                # v = v_all[:-1]
-                # advantage = rewards + self.gamma * v_next * not_dones - v
-                # advantage = self.compute_gae( deltas, rewards, v[-1])
                 v_loss = tf.reduce_mean(tf.square(advantage))
-
-            v_grad = tape.gradient(v_loss, self.V.trainable_variables)
-            self.V_optim.apply_gradients(zip(v_grad, self.V.trainable_variables))
-
-            with tf.GradientTape() as tape2:
-                p = self.policy.get_probs(states[:-1])
-                self.policy.l2.reset_states()
+                
+                p = self.policy.get_probs(states[:, :-1])
+                #p = tf.reshape( p, (self.traj_length, self.batch_size, self.action_dim))
                 p_log = tf.math.log(p + 1e-8)
-
+           
                 ent = - tf.reduce_sum(tf.multiply(p_log, p), -1)
                 # dist = tf.stop_gradient((self.max_entropy - ent) / self.max_entropy)
-                range = tf.expand_dims(tf.range(self.batch_size), axis=1)
-                indices = tf.concat(values=[range, actions], axis=1)
-
-                policy_loss = - tf.reduce_mean(
-                    tf.expand_dims(tf.gather_nd(p_log, indices), axis=1) * advantage + self.entropy_scale * ent)
-
-            p_grad = tape2.gradient(policy_loss, self.policy.trainable_variables)
-            self.p_optim.apply_gradients(zip(p_grad, self.policy.trainable_variables))
-
+                range_ = tf.expand_dims(tf.tile(tf.expand_dims(tf.range(self.traj_length), axis=0), [self.batch_size , 1]), axis=2)
+                pattern = tf.expand_dims([tf.fill((self.traj_length,), i) for i in range(self.batch_size)], axis=2)
+                indices = tf.concat(values=[ pattern, range_, tf.expand_dims(actions, axis=2)], axis=2)
+                
+                
+                taken_p_log = tf.gather_nd(p_log, indices, batch_dims=0)
+                
+                
+                p_loss = - tf.reduce_mean(
+                    taken_p_log * tf.stop_gradient(advantage) + self.entropy_scale * ent)
+                    
+                total_loss = 0.5 * v_loss + p_loss
+           
+            grad = tape.gradient(total_loss, self.policy.trainable_variables + self.V.trainable_variables)
+            self.optim.apply_gradients(zip(grad, self.policy.trainable_variables + self.V.trainable_variables))
+            
             # with tf.GradientTape() as tape3:
             #    ent_scale_loss = -tf.reduce_mean( self.entropy_scale * ( self.target_entropy - ent) / self.target_entropy)
-            #
+           
             # ent_grad = tape3.gradient(ent_scale_loss, [self.entropy_scale])
             # self.ent_optim.apply_gradients(zip(ent_grad, [self.entropy_scale]))
+            
+            # Train predictor
+            if self.train_predictor:
+                with tf.GradientTape() as tape2:
+                    states_ = self.predictor(states[:, :-1])
+
+                    predict_loss = tf.reduce_mean(tf.square(states[:, :-1]-states_))
+
+                grad = tape2.gradient(predict_loss, self.predictor.trainable_variables)
+                self.p_optim.apply_gradients(zip(grad, self.predictor.trainable_variables))
 
             self.step.assign_add(1)
             mean_entropy = tf.reduce_mean(ent)
             min_entropy = tf.reduce_min(ent)
             max_entropy = tf.reduce_max(ent)
-            diff = tf.reduce_mean(tf.divide(tf.abs(tf.expand_dims(tf.gather_nd(p_log, indices), axis=1) * advantage),
-                                            self.entropy_scale * ent))
-
-            return policy_loss, v_loss, mean_entropy, min_entropy, max_entropy, diff, tf.reduce_min(
+            # diff = tf.reduce_mean(tf.divide(tf.abs(tf.expand_dims(tf.gather_nd(p_log, indices), axis=1) * advantage),
+            #                                self.entropy_scale * ent))
+                                            
+            #self.V.l2.reset_states()
+            #self.policy.l2.reset_states()
+            if self.train_predictor:
+                pass
+                #self.predictor.l2.reset_states()
+            else:
+                predict_loss = 0
+            
+            return v_loss, predict_loss, mean_entropy, min_entropy, max_entropy, tf.reduce_min(
                 p_log), tf.reduce_max(p_log)
 
     def compute_gae(self, v, rewards, last_v):
+        v = tf.transpose(v)
+        rewards= tf.transpose(rewards)
+        reversed_sequence = [tf.reverse(t, [0]) for t in [v, rewards]]
+        
+        def bellman(future, present):
+            val, r = present
+            m = tf.cast(r > -0.9, tf.float32)
+            return (1. - self.gae_lambda) * val + self.gae_lambda * (r + (1.0-self.neg_scale)*relu(-r)  + self.gamma * future * m)
+        
+        returns = tf.scan(bellman, reversed_sequence, last_v)
+        returns = tf.reverse(returns, [0])
+        returns = tf.transpose(returns)
+        #tf.print(returns.shape, returns, summarize=-1)
+        return returns
+        
+    def v_trace(self, v0, v, rewards, taken_probs, probs):
+        reversed_sequence = [tf.reverse(t, [0]) for t in [v, rewards]]
         def bellman(future, present):
             val, r, l = present
             return (1. - l) * val + l * (r + self.gamma * future)
-
-        reversed_sequence = [tf.reverse(t, [0]) for t in [v, rewards, self.gae_lambda]]
-        returns = tf.scan(bellman, reversed_sequence, last_v)
+        
+        
+        
+        returns = tf.scan(bellman, reversed_sequence, v0)
         returns = tf.reverse(returns, [0])
-        return returns
 
 
 class RERPI(tf.keras.Model):
@@ -370,8 +559,8 @@ class RERPI(tf.keras.Model):
         self.Q_targ = Q(state_shape, action_dim)
         self.policy = CategoricalActor(state_shape, action_dim, epsilon_greedy)
         self.policy_theta = CategoricalActor(state_shape, action_dim, epsilon_greedy)
-        self.Q_optim = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.9, beta_2=0.98, epsilon=1e-8)
-        self.p_optim = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.9, beta_2=0.98, epsilon=1e-8)
+        self.Q_optim = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.9, beta_2=0.98, epsilon=1e-8, clipnorm=1.0)
+        self.p_optim = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.9, beta_2=0.98, epsilon=1e-8, clipnorm=1.0)
 
         self.target_update_frq = target_update_freq
         self.step = tf.Variable(0, dtype=tf.int32)

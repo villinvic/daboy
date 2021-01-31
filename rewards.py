@@ -1,9 +1,11 @@
 import numpy as np
 import tensorflow as tf
 
+sign = lambda x: (x > 0) - (x < 0)
 
 def compute_damages(player, states):
-    return max([states[-1].players[player].percent - states[0].players[player].percent, 0.0])
+    dmg = states[-1].players[player].percent - states[0].players[player].percent
+    return np.clip(dmg, 0.0, 20.0) # reward more for small rewards
 
 
 def is_dead(p_num, states):  # 2 states
@@ -64,8 +66,10 @@ def compute_all_rewards(states, mode, damage_ratio=0.01, distance_ratio=0.0003, 
 
     return rews
 
+no_dmg_counter = [0,0]
 
 def compute_rewards(states, p1, p2, damage_ratio, distance_ratio, loss_intensity):
+    global no_dmg_counter
     """Computes rewards from a list of state transitions.
 
     Args:
@@ -81,29 +85,22 @@ def compute_rewards(states, p1, p2, damage_ratio, distance_ratio, loss_intensity
       A length T numpy array with the rewards on each transition.
     """
 
-    # pids = enemies + allies
-    # players = [[], []]
-    # for enum, _ in enumerate(players):
-    #    players[enum] = [state.players[enum] for state in states]
+    if distance_ratio == 0.0:
+        distance_rwd = 0
+        d2 = distance(states[-1])
+    else:
+        dx = sign(states[-1].players[p2].pos_x - states[-1].players[p1].pos_x)
+        dy = sign(states[-1].players[p2].pos_y - states[-1].players[p1].pos_y)
+        momentum_x = states[-1].players[p2].self_air_vel_x+states[-1].players[p2].speed_ground_x_self
+        momentum_y = states[-1].players[p2].self_air_vel_y
+        dist = np.sqrt(np.square(states[-1].players[p2].pos_x-states[0].players[p2].pos_x) + np.square(states[-1].players[p2].pos_y-states[0].players[p2].pos_y))
+        dist = np.clip(dist, 0.0, 10.0)
+        if dx * momentum_x + dy * momentum_y < 0 :
+                distance_rwd = dist
+        else:
+                #print('away')
+                distance_rwd = -dist
 
-    # players = states['players'] -70.3 -11.75 -110
-
-    # print(players[0][-1].pos_y)
-    # is_x_moving = np.abs(players[1][-1].self_air_vel_x) + np.abs(players[1][-1].speed_ground_x_self) + \
-    #            np.abs(players[1][-1].attack_vel_x) > 0.5
-    # velocity_ratio = (1.0+velocity_ratio) if is_x_moving else 1.0
-
-    # damages = {p: compute_damages(players[p]) for p in pids}
-    # losses = {p:  damage_ratio * damages[p] for p in pids}
-
-    distance_rwd = (distance(states[0]) - distance(states[-1])) * distance_ratio
-
-    # dx = players[1][-1].pos_x - players[0][-1].pos_x
-    # dy = players[1][-1].pos_y - players[0][-1].pos_y
-    # if dx * players[1][-1].self_air_vel_x > 0 or dx * players[1][-1].speed_ground_x_self > 0:
-    #    distance_rwd = 0
-    # if players[1][-1].self_air_vel_x + players[1][-1].speed_ground_x_self == 0:
-    #    distance_rwd = 0
     # elif dy * players[1][-1].self_air_vel_y > 0:
     #    distance_rwd = 0
     # self_dx = abs(players[1][-1].pos_x - players[1][0].pos_x)
@@ -112,11 +109,11 @@ def compute_rewards(states, p1, p2, damage_ratio, distance_ratio, loss_intensity
     #    distance_rwd = 0
 
     # falling_loss = falling_penalty( players[1]) * recovery_ratio
-    total = distance_rwd + damage_ratio * (compute_damages(p1, states) - compute_damages(p2, states))
+    dmg_reward = compute_damages(p1, states) - compute_damages(p2, states)
+    total = distance_rwd*distance_ratio + dmg_reward*damage_ratio
     # total = distance_rwd + sum(losses[p] for p in enemies) - (sum(losses[p] for p in allies))
-    if total < 0:
-        total *= loss_intensity
-
+    #if total < 0:
+    #    total *= loss_intensity
     return total
 
 
