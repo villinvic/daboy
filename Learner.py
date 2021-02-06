@@ -19,7 +19,7 @@ class ACLearner:
         tf.summary.experimental.set_step(0)
         self.checkpoint_manager = check_point_manager
         self.flush_freq = 100
-        self.save_ckpt_freq = int(1000/float(batch_size))
+        self.save_ckpt_freq = int(10000/float(batch_size))
         self.gc_freq = 3000
         self.write_summary_freq = 3
 

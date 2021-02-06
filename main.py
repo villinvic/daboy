@@ -59,8 +59,8 @@ class Main(Default):
         Option('char', type=str, default='ganon'),
         Option('batch_size', type=int, default=8),
 
-        Option('neg_scale', type=float, default=0.9),
-        Option('dist_scale', type=float, default=0.01),
+        Option('neg_scale', type=float, default=0.95),
+        Option('dist_scale', type=float, default=0.),
         Option('dmg_scale', type=float, default=0.01),
         
     ]
