@@ -7,7 +7,7 @@ import gc
 import zmq
 
 
-def run(ip, self_play=True, n_actors=1, eval=False, output_dir='checkpoints',
+def run(ip='127.0.0.1', self_play=True, n_actors=1, eval=False, output_dir='checkpoints',
         ep_length=20*10+1, dolphin_dir='../dolphin/', iso_path='../isos/melee.iso',
         video_backend='OGL', epsilon=0.01, n_warmup=0, render_all=False, char='ganon', restart_freq=45*60):
 

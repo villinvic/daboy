@@ -405,7 +405,7 @@ class AC(tf.keras.Model):
         self.batch_size = batch_size
         self.gamma = gamma
         self.neg_scale = neg_scale
-        self.as_scale = 0.003
+        self.as_scale = 0.004
         self.train_predictor = train_predict
         self.gae_lambda = tf.Variable(gae_lambda, dtype=tf.float32, trainable=False)
         self.epsilon = tf.Variable(0.001, dtype=tf.float32, trainable=False)
@@ -416,7 +416,7 @@ class AC(tf.keras.Model):
         #self.ac = CategoricalActorShare(state_shape, action_dim, epsilon_greedy)
         self.p_optim = tf.keras.optimizers.SGD(learning_rate=1.0)
         #self.ent_optim = tf.keras.optimizers.Adam(learning_rate=lr * 0.1, beta_1=0.9, beta_2=0.98, epsilon=1e-8)
-        self.optim = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.9, epsilon=1e-8, clipvalue=3.3e-3)
+        self.optim = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.9, beta_2=0.98, epsilon=1e-8, clipvalue=3.3e-3)
         self.step = tf.Variable(0, dtype=tf.int32)
         self.traj_length = tf.Variable(traj_length - 1, dtype=tf.int32, trainable=False)
 
@@ -434,7 +434,6 @@ class AC(tf.keras.Model):
 
     def train(self, states, actions, rewards, r_states, fake=False):
         # do some stuff with arrays
-
         # print(states, actions, rewards, dones)
         if tf.reduce_any(tf.math.is_nan(states)):
                 print(list(states))
