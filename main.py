@@ -18,6 +18,7 @@ import psutil
 
 
 #cudNN fix
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 physical_devices = tf.config.list_physical_devices('GPU')
 tf.config.experimental.set_memory_growth(physical_devices[0], enable=True)
 
@@ -52,7 +53,7 @@ class Main(Default):
         Option('epsilon', type=float, default=0.02),
         Option('gae_lambda', type=float, default=1.0),
         Option('alpha', type=float, default=6e-4),
-        Option('ep_length', type=int, default=20*20+1),
+        Option('ep_length', type=int, default=20*10+1),
         Option('generate_exp', action='store_true'),
         Option('mode', choices=['learner', 'actor', 'both'], default='both'),
         Option('eval', action='store_true'),
@@ -60,8 +61,10 @@ class Main(Default):
         Option('batch_size', type=int, default=8),
 
         Option('neg_scale', type=float, default=0.95),
-        Option('dist_scale', type=float, default=0.),
+        Option('dist_scale', type=float, default=0.0001),
         Option('dmg_scale', type=float, default=0.01),
+
+        Option('localhost', action='store_true')
         
     ]
 
@@ -117,7 +120,7 @@ class Main(Default):
                 self.net.policy.epsilon.assign(self.epsilon)
                 self.net.entropy_scale.assign(self.alpha)
 
-            self.learner = ACLearner(self.net, self.checkpoint_manager, self.ep_length, params, self.batch_size)
+            self.learner = ACLearner(self.net, self.checkpoint_manager, self.ep_length, params, self.batch_size, self.localhost)
 
         if self.mode['actor']:
             if self.render_none:

@@ -5,10 +5,13 @@ import tensorflow as tf
 import zmq
 import gc
 import pandas as pd
+import socket
+
 
 class ACLearner:
-    def __init__(self, net, check_point_manager, traj_length, params, batch_size):
+    def __init__(self, net, check_point_manager, traj_length, params, batch_size, is_localhost):
 
+        self.ip = '127.0.0.1' if is_localhost else socket.gethostbyname(socket.gethostname())
         self.params = params
         self.AC = net
         self.model_file = "\\models\\model.ckpt"
@@ -50,11 +53,12 @@ class ACLearner:
         states = np.float32(np.stack(trajectory[:, 0], axis = 0))
         actions = np.float32(np.stack(trajectory[:, 1], axis = 0)[:, :-1])
         rews = np.float32(np.stack(trajectory[:, 2], axis = 0)[:, 1:])
+        r_states = np.stack(trajectory[:, 3], axis = 0)[:, 0,:]
         # states, actions, rews = self.compute_traj(trajectory)
         # print('etc  ', time() - self.time)  # 0.14
         with tf.summary.record_if(self.cntr % self.write_summary_freq == 0):
             # t = time()
-            self.AC.train( states, actions, rews, self.dones)
+            self.AC.train( states, actions, rews, r_states)
             # print('train', time() - t)  # 0.0
 
         # self.time = time()
@@ -86,12 +90,12 @@ class ACLearner:
     def setup_context(self):
         context = zmq.Context()
         self.exp_socket = context.socket(zmq.PULL)
-        self.exp_socket.bind("tcp://127.0.0.1:5557")
+        self.exp_socket.bind("tcp://%s:5557" % self.ip)
         self.blob_socket = context.socket(zmq.PUB)
-        self.blob_socket.bind("tcp://127.0.0.1:5555")
+        self.blob_socket.bind("tcp://%s:5557" % self.ip)
         self.topic = b''
         self.eval_socket = context.socket(zmq.PULL)
-        self.eval_socket.bind("tcp://127.0.0.1:5556")
+        self.eval_socket.bind("tcp://%s:5557" % self.ip)
 
 
     def empty_sockets(self):
@@ -130,8 +134,9 @@ class ACLearner:
     def run(self):
         try:
             timer = time()
-            dummy_states = np.zeros((self.batch_size, self.traj_length, 847))
+            dummy_states = np.zeros((self.batch_size, self.traj_length, 847), dtype=np.float32)
             self.AC.policy.get_probs(dummy_states)
+            self.AC.V(dummy_states)
             self.cntr = 1
             self.empty_sockets()
             while True:

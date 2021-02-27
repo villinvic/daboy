@@ -109,10 +109,16 @@ def compute_rewards(states, p1, p2, damage_ratio, distance_ratio, loss_intensity
     #    distance_rwd = 0
 
     # falling_loss = falling_penalty( players[1]) * recovery_ratio
+    
     edge_guard_boost = 1.0
-    if np.abst(states[-1].players[p2].pos_x) > 55:
+    combo_bonus = 1.0
+    if np.abs(states[-1].players[p2].pos_x) > 55 and not states[-1].players[p2].on_ground :
         edge_guard_boost = 1.15
-    dmg_reward = compute_damages(p1, states) * edge_guard_boost - compute_damages(p2, states)
+    if states[0].players[p1].hitstun >= 1 :
+        combo_bonus = 1.3
+        
+        
+    dmg_reward = compute_damages(p1, states) * edge_guard_boost * combo_bonus - compute_damages(p2, states)
     total = distance_rwd*distance_ratio + dmg_reward*damage_ratio
     # total = distance_rwd + sum(losses[p] for p in enemies) - (sum(losses[p] for p in allies))
     #if total < 0:

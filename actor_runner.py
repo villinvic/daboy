@@ -7,11 +7,11 @@ import gc
 import zmq
 
 
-def run(self_play=True, n_actors=1, eval=False, output_dir='checkpoints',
-        ep_length=20*20+1, dolphin_dir='../dolphin/', iso_path='../isos/melee.iso',
+def run(ip, self_play=True, n_actors=1, eval=False, output_dir='checkpoints',
+        ep_length=20*10+1, dolphin_dir='../dolphin/', iso_path='../isos/melee.iso',
         video_backend='OGL', epsilon=0.01, n_warmup=0, render_all=False, char='ganon', restart_freq=45*60):
 
-        cmd = [f'python3 actor_proc.py {self_play and not (i == n_actors-1 and eval)} {output_dir} {ep_length} {dolphin_dir} {iso_path} {video_backend if (i == 0 or (i == n_actors - 1 and eval) or render_all) else "Null"} {i} {n_actors} {epsilon} {n_warmup} {char}' for i in range(n_actors)]
+        cmd = [f'python3 actor_proc.py {ip, self_play and not (i == n_actors-1 and eval)} {output_dir} {ep_length} {dolphin_dir} {iso_path} {video_backend if (i == 0 or (i == n_actors - 1 and eval) or render_all) else "Null"} {i} {n_actors} {epsilon} {n_warmup} {char}' for i in range(n_actors)]
         
         alert_socket = zmq.Context().socket(zmq.PULL)
         alert_socket.bind("tcp://127.0.0.1:7555")

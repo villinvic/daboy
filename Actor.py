@@ -31,15 +31,15 @@ class ACAgent(CategoricalActor):
 
         state = state[np.newaxis][np.newaxis].astype(
             np.float32) if is_single_state else state
-        action = self._get_action_body(tf.constant(state))
+        action, recurrent_state = self._get_action_body(tf.constant(state))
 
-        return action.numpy()[0][0] if is_single_state else action
+        return (action.numpy()[0][0], recurrent_state.numpy()) if is_single_state else (action, recurrent_state.numpy())
 
     @tf.function
     def _get_action_body(self, state):
         param = self._compute_dist(state)
         action = tf.squeeze(self.dist.sample(param), axis=1)
-        return action
+        return action, param['recurrent_state']
 
 
 # TODO
@@ -48,7 +48,7 @@ class ACAgent(CategoricalActor):
 
 class Actor:
 
-    def __init__(self, self_play, ckpt_dir, ep_length,
+    def __init__(self, learner_ip, self_play, ckpt_dir, ep_length,
                  dolphin_dir, iso_path, video_backend,
                  actor_id, n_actors, epsilon, n_warmup,
                  char, test):
@@ -58,6 +58,7 @@ class Actor:
         
         self.self_play = self_play
         self.ckpt_dir = ckpt_dir
+        self.learner_ip = learner_ip
 
         self.mw_path = dolphin_dir + 'User/MemoryWatcher/MemoryWatcher'
         self.locations = dolphin_dir + 'User/MemoryWatcher/Locations.txt'
@@ -85,7 +86,7 @@ class Actor:
         #                 units=[512, 256]) if self.self_play else None
         self.policy = ACAgent(env.observation_space, 1, ep_length-1, env.action_space.len, epsilon)
         
-        #self.opp = ACAgent(env.observation_space, 1, ep_length-1, env.action_space.len, epsilon) if self.self_play else None
+        self.opp = ACAgent(env.observation_space, 1, ep_length-1, env.action_space.len, epsilon) if self.self_play else None
         #if self.self_play:
         #    self.checkpoint = tf.train.Checkpoint(actor=self.opp)
 
@@ -133,11 +134,7 @@ class Actor:
 
         self.bench = [[], []]
 
-        self.as_scale = 0.1
-        self.min_as_count = 60
-        self.max_as_count = 60 * 7
         self.ttt = 0
-        self.as_tracker = np.array([0 for _ in range(384)])
 
         self.communicate_freq = 60 * 10
         # self.trajectory = Trajectory(ep_length, 1)
@@ -151,6 +148,7 @@ class Actor:
             'action': np.zeros((self.episode_length,), dtype=np.int32),
             'rew': np.zeros((self.episode_length,), dtype=np.float32),
             # 'mode': 1,
+            'r_state': None,
         }
         if self.self_play:
             # self.opp_trajectory = Trajectory(ep_length, -1)
@@ -160,6 +158,7 @@ class Actor:
                 'action': np.zeros((self.episode_length,), dtype=np.int32),
                 'rew': np.zeros((self.episode_length,), dtype=np.float32),
                 # 'mode': -1,
+                'r_state': None,
             }
         else:
             self.opp_trajectory = None
@@ -175,6 +174,8 @@ class Actor:
 
         self.max_reward_bug = 10 if not self.self_play else 50
         self.reward_bug_counter = 0
+        
+        self.recurrent_state = [None, None]
 
     def restart(self):
         print('Restarting Actor', self.id)
@@ -203,13 +204,13 @@ class Actor:
         self.alert_socket = context.socket(zmq.PUSH)
         self.alert_socket.connect("tcp://127.0.0.1:7555")
         self.exp_socket = context.socket(zmq.PUSH)
-        self.exp_socket.connect("tcp://127.0.0.1:5557") # 157.16.63.57
+        self.exp_socket.connect("tcp://%s:5557" % self.learner_ip) # 157.16.63.57
         self.blob_socket = context.socket(zmq.SUB)
-        self.blob_socket.connect("tcp://127.0.0.1:5555")
+        self.blob_socket.connect("tcp://%s:5557" % self.learner_ip)
         self.blob_socket.subscribe(b'')
         if not self.self_play:
             self.eval_socket = context.socket(zmq.PUSH)
-            self.eval_socket.connect("tcp://127.0.0.1:5556")
+            self.eval_socket.connect("tcp://%s:5557" % self.learner_ip)
         else:
             self.eval_socket = None
 
@@ -237,15 +238,6 @@ class Actor:
         del self.action_queue[0]
         self.action_queue.append(self.last_action_id)
 
-    def track_as(self, player):
-        self.as_tracker += 1
-        self.as_tracker[self.state.players[player].action_state.value] = 0
-
-    def as_reward(self, action_state):
-        if action_state > 383:
-            return 0
-        return np.clip(self.as_tracker[action_state] - 20 * self.min_as_count, 0, 20 * self.max_as_count)\
-               / float(self.max_as_count)
 
     def update_status_hist(self, p_num, frame_dif, mode="normal"):
         if mode == "normal":
@@ -320,9 +312,8 @@ class Actor:
         try:
             params = self.blob_socket.recv_pyobj(flag)
             self.policy.load_params(params['weights'])
-            #if self.self_play:
-            #    self.opp.load_params(params['weights'])
-                
+            if self.self_play:
+                self.opp.load_params(params['weights'])
             self.neg_scale = params['neg_scale']
             self.dist_scale = params['dist_scale']
             self.dmg_scale = params['dmg_scale']
@@ -344,6 +335,7 @@ class Actor:
             print("Couldn't randomize opp:", e)
 
     def check_episode(self, mode='normal'):
+    
         if mode == 'normal':
             if self.current_episode_length == self.episode_length:
                 if not self.self_play:
@@ -380,7 +372,7 @@ class Actor:
 
     def evaluate(self, death_loss=1.0, p1=0, p2=1, mode="normal"):
         is_off_stage = abs(self.state_queue[-1].players[p2].pos_x) > 60  # fd  60# bf
-        off_stage_kill_bonus = 1.15 if is_off_stage else 1.0
+        off_stage_kill_bonus = 1.2 if is_off_stage else 1.0
         done = self.isDead(p2, mode=mode)
         #if done:
         #    p = self.state_queue[-1].players[p2].percent
@@ -400,11 +392,6 @@ class Actor:
 
         r += compute_rewards(states, p1=p1, p2=p2, damage_ratio=self.dmg_scale, distance_ratio=self.dist_scale,
                              loss_intensity=self.neg_scale)
-        # action_state bonus
-        as_bonus = self.as_reward(states[0].players[p2].action_state.value)
-        if self.id == 0 and as_bonus>0:
-            print("as bonus:", as_bonus)
-        r += as_bonus * self.as_scale
         #else:
         #    r = rr
 
@@ -421,13 +408,15 @@ class Actor:
             self.steps += 1
             return self.policy.get_action(state)
         else:
-            return self.policy.get_action(state)
+            return self.opp.get_action(state)
 
     def store_transition(self, action, np_obs, mode='normal'):
         done = self.check_episode(mode=mode)
         if mode == 'opp':
             r = self.evaluate(p1=1, p2=0, mode=mode)
             # self.opp_trajectory.states[self.opp_current_episode_length] = Transition(np_obs, action, done, r)
+            if self.opp_current_episode_length == 0:
+                self.opp_trajectory['r_state'] = self.recurrent_state[1]
             self.opp_trajectory['state'][self.opp_current_episode_length] = np_obs
             self.opp_trajectory['action'][self.opp_current_episode_length] = action
             self.opp_trajectory['rew'][self.opp_current_episode_length] = r
@@ -435,6 +424,8 @@ class Actor:
         else:
             r = self.evaluate( mode=mode)
             # self.trajectory.states[self.current_episode_length] = Transition(np_obs, action, done, r)
+            if self.current_episode_length == 0:
+                self.trajectory['r_state'] = self.recurrent_state[0]
             self.trajectory['state'][self.current_episode_length] = np_obs
             self.trajectory['action'][self.current_episode_length] = action
             self.trajectory['rew'][self.current_episode_length] = r
@@ -468,12 +459,12 @@ class Actor:
                     # AI
                     last_action_id = self.trajectory['action'][(self.current_episode_length-1) % self.episode_length]
                     self.update_obs(p2, last_action_id=last_action_id)
-                    action_id = self.choose_action(self.observation)
+                    action_id, r_state = self.choose_action(self.observation)
 
                     if action_id == self.action_space.len:
                         print('error action nan ? ', self.id)
                         action_id = 0
-                        #self.policy.l2.reset_states()
+                        self.policy.l1.reset_states()
                      
                     #if self.state.players[p2].pos_x < 0:
                     #    action = self.action_space[self.action_space.sym[action_id]]
@@ -482,7 +473,7 @@ class Actor:
                         
                  
                     self.store_transition(action_id, deepcopy(self.observation))
-                    self.track_as(p2)
+                    self.recurrent_state[0] = r_state
                     # if wavedashing in air, choose random action
                     # if isinstance(action, list):
                     #    if not self.state.players[1].on_ground and (action[1]['L'][0] == 0.8 or action[1]['L'][0] == 0.2):
@@ -504,12 +495,12 @@ class Actor:
                     last_action_id = self.opp_trajectory['action'][(self.opp_current_episode_length-1) % self.episode_length]
                     self.update_obs(p1, last_action_id=last_action_id)
 
-                    opp_action_id = self.choose_action(self.opp_observation, mode="opp")
+                    opp_action_id, r_state = self.choose_action(self.opp_observation, mode="opp")
 
                     if opp_action_id == self.action_space.len:
                         print('error action nan ?')
                         opp_action_id = 0
-                        #self.opp.l2.reset_states()
+                        self.opp.l1.reset_states()
                         
                     #if self.state.players[p1].pos_x < 0:
                     #    opp_action = self.action_space[self.action_space.sym[opp_action_id]]
@@ -518,7 +509,7 @@ class Actor:
 
 
                     self.store_transition(opp_action_id, deepcopy(self.opp_observation), mode='opp')
-                    self.track_as(p1)
+                    self.recurrent_state[1] = r_state
                     # if wavedashing in air, choose random action
                     # if isinstance(action, list):
                     #    if not self.state.players[1].on_ground and (action[1]['L'][0] == 0.8 or action[1]['L'][0] == 0.2):
@@ -606,7 +597,7 @@ class Actor:
         if res is not None:
             self.sm.handle(res)
         #print( last_frame, self.state.frame > last_frame, self.init_frame)
-        if self.init_frame < 120:
+        if (self.test and self.init_frame < 120) or self.init_frame < 240:
                 self.init_frame += 1
 
         elif self.state.frame > last_frame:
@@ -629,10 +620,9 @@ class Actor:
         self.dolphin_proc.run()
         tries = 15
         # test
-        act = self.policy.get_action(self.observation)
-        # print(act)
-        #if self.self_play:
-        #    act = self.opp.get_action(self.get_obs(1))
+        act, self.recurrent_state[0] = self.policy.get_action(self.observation)
+        if self.self_play:
+            act, self.recurrent_state[1] = self.opp.get_action(self.observation)
             
         if self.id == 0:
                 print('getting params from learner...')
