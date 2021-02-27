@@ -206,11 +206,11 @@ class Actor:
         self.exp_socket = context.socket(zmq.PUSH)
         self.exp_socket.connect("tcp://%s:5557" % self.learner_ip) # 157.16.63.57
         self.blob_socket = context.socket(zmq.SUB)
-        self.blob_socket.connect("tcp://%s:5557" % self.learner_ip)
+        self.blob_socket.connect("tcp://%s:5555" % self.learner_ip)
         self.blob_socket.subscribe(b'')
         if not self.self_play:
             self.eval_socket = context.socket(zmq.PUSH)
-            self.eval_socket.connect("tcp://%s:5557" % self.learner_ip)
+            self.eval_socket.connect("tcp://%s:5556" % self.learner_ip)
         else:
             self.eval_socket = None
 

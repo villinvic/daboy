@@ -92,10 +92,10 @@ class ACLearner:
         self.exp_socket = context.socket(zmq.PULL)
         self.exp_socket.bind("tcp://%s:5557" % self.ip)
         self.blob_socket = context.socket(zmq.PUB)
-        self.blob_socket.bind("tcp://%s:5557" % self.ip)
+        self.blob_socket.bind("tcp://%s:5555" % self.ip)
         self.topic = b''
         self.eval_socket = context.socket(zmq.PULL)
-        self.eval_socket.bind("tcp://%s:5557" % self.ip)
+        self.eval_socket.bind("tcp://%s:5556" % self.ip)
 
 
     def empty_sockets(self):
