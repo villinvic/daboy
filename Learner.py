@@ -134,7 +134,7 @@ class ACLearner:
     def run(self):
         try:
             timer = time()
-            dummy_states = np.zeros((self.batch_size, self.traj_length, 847), dtype=np.float32)
+            dummy_states = np.zeros((self.batch_size, self.traj_length, self.AC.state_shape[0]), dtype=np.float32)
             self.AC.policy.get_probs(dummy_states)
             self.AC.V(dummy_states)
             self.cntr = 1

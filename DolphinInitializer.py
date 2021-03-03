@@ -11,16 +11,15 @@ import pprint
 
 class DolphinInitializer:
 
-    def __init__(self, actor, exe, iso_path, video, self_play, test):
+    def __init__(self, actor, exe, iso_path, video, test):
         self.actor = actor
         self.exe = exe
         self.iso_path = iso_path
         self.video = video
         self.n =-1
-        self.self_play = self_play
         self.test = test
         
-    def run(self):
+    def run(self, char1, char2):
         config_path = '../dolphin/User/Config/Dolphin.ini'
         game_config_path = '../dolphin/User/GameSettings/GALE01.ini'
         if self.actor <= self.n or self.video != "Null":
@@ -51,16 +50,15 @@ class DolphinInitializer:
 
         gconfig = gconfig.split('$Setup match')
 
-        ennemy_char = 'ganon' if self.self_play else 'fox'
         if self.test:
             print("List of available chars:")
             pprint.pprint(char_ids.keys())
             print("Human's character : ", end="")
-            ennemy_char = input()
-            assert ennemy_char in char_ids.keys()
+            char1 = input()
+            assert char1 in char_ids.keys()
                 
-        playertype = PlayerStatus.HUMAN if (self.self_play or self.test) else PlayerStatus.CPU
-        gconfig = gconfig[0] + '$Setup match' + setup_match_code('battlefield', player1=playertype ,char1=ennemy_char)
+        playertype = PlayerStatus.HUMAN
+        gconfig = gconfig[0] + '$Setup match' + setup_match_code('battlefield', player1=playertype, char1=char1, char2=char2)
         if self.test or self.video != "Null":
             enabled = """
 [Gecko_Enabled]

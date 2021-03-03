@@ -167,7 +167,7 @@ class Action_Space(dict):
                                     break
                                     
 
-    def __init__(self, char='mario'):
+    def __init__(self, char='ganon'):
         dict.__init__(self)
         self.stick_states = [
             (0.5, 0.5),
@@ -204,7 +204,8 @@ class Action_Space(dict):
 
         for s_state in self.stick_states:
             for item in UsefullButton:
-                self.add(ControllerState(button=item.name, stick=s_state))
+                if not (char in ['mario'] and item.name=='b' and (s_state[1] == 0.0 or s_state[0] != 0.5)): # down b requires side b
+                    self.add(ControllerState(button=item.name, stick=s_state))
 
             for sc_state in self.smash_states:
                 self.add(ControllerState(stick=s_state, c_stick=sc_state))
@@ -234,12 +235,25 @@ class Action_Space(dict):
         jgrab = [jump1, grab]
         self.add(jgrab)
         
+        if char in  ['mario', 'luigi']:
+            leftb = ControllerState(button='B', stick=(0.0, 0.5), duration=1)
+            rightb = ControllerState(button='B', stick=(1.0, 0.5), duration=1)
+            left = ControllerState(stick=(0.0, 0.5), duration=1)
+            right = ControllerState(stick=(1.0, 0.5), duration=1)
+            downb = ControllerState(button='B', stick=(0.5, 0.0), duration=1)
+            down = ControllerState(stick=(0.5, 0.0), duration=1)
+            self.add([leftb, left])
+            self.add([rightb, right])
+            self.add([downb, down])
+            
+        
         no_op = ControllerState()
         no_op.no_op = True
         self.add(no_op)
 
 
-        self.build_sym()
+        #self.build_sym()
+        
 
         # for i in range(self.len):
         #    if isinstance(self[i], list):

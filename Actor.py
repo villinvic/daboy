@@ -48,17 +48,17 @@ class ACAgent(CategoricalActor):
 
 class Actor:
 
-    def __init__(self, learner_ip, self_play, ckpt_dir, ep_length,
+    def __init__(self, learner_ip, self_play, enemy_path, ep_length,
                  dolphin_dir, iso_path, video_backend,
                  actor_id, n_actors, epsilon, n_warmup,
                  char, test):
                  
         signal.signal(signal.SIGINT, self.exit)
-        super().__init__()
         
         self.self_play = self_play
-        self.ckpt_dir = ckpt_dir
+        self.enemy_path = enemy_path
         self.learner_ip = learner_ip
+        self.char = char
 
         self.mw_path = dolphin_dir + 'User/MemoryWatcher/MemoryWatcher'
         self.locations = dolphin_dir + 'User/MemoryWatcher/Locations.txt'
@@ -66,29 +66,37 @@ class Actor:
         dolphin_exe = dolphin_dir + 'dolphin-emu-nogui'
         print(dolphin_exe, dolphin_dir, self.mw_path, self.pad_path)
 
-        #self.setDaemon(True)
         self.id = actor_id
         self.n_actors = n_actors
-        self.dolphin_proc = DolphinInitializer(self.id, dolphin_exe, iso_path, video_backend, self.self_play, test)
+        self.dolphin_proc = DolphinInitializer(self.id, dolphin_exe, iso_path, video_backend, test)
         self.dolphin_dir = dolphin_dir
+
+        if not self_play:
+            ckpt = self.randomize_opp()
+        else :
+            self.opp_char = char
+
         self.action_space = P.Action_Space(char=char)
-        self.discrete_action_space = [i for i in range(self.action_space.len)]
+        self.opp_action_space = P.Action_Space(char=self.opp_char)
+
         self.shutdown_flag = Event()
         self.steps = 0
         self.epsilon = epsilon
         self.current_episode_length = 0
         self.opp_current_episode_length = 0 if self.self_play else None
         env = MeleeEnv(char)
+        opp_env = MeleeEnv(self.opp_char)
+
         self.game_start = True
         self.test = test
         # self.policy = Agent(MeleeEnv.observation_space, MeleeEnv.action_space.len, epsilon, units=[512, 256])
         # self.opp = Agent(MeleeEnv.observation_space, MeleeEnv.action_space.len, epsilon,
         #                 units=[512, 256]) if self.self_play else None
-        self.policy = ACAgent(env.observation_space, 1, ep_length-1, env.action_space.len, epsilon)
-        
-        self.opp = ACAgent(env.observation_space, 1, ep_length-1, env.action_space.len, epsilon) if self.self_play else None
-        #if self.self_play:
-        #    self.checkpoint = tf.train.Checkpoint(actor=self.opp)
+        self.policy = ACAgent(env.observation_space, 1, ep_length-1, self.action_space.len, epsilon)
+        self.opp = ACAgent(opp_env.observation_space, 1, ep_length - 1, self.opp_action_space.len, epsilon)
+        if not self_play:
+            self.checkpoint = tf.train.Checkpoint(actor=self.opp)
+            self.checkpoint.restore(ckpt).expect_partial()
 
         self.n_warmup = n_warmup
 
@@ -98,25 +106,25 @@ class Actor:
         self.pad = [P.Pad(self.pad_path + "_enemy"), P.Pad(self.pad_path)]
         make_async(self.pad)
         self.mm = MenuManager()
-        self.mm.setup_move(self.pad, 1, cpu=not self.self_play, char=char)
+        # self.mm.setup_move(self.pad, 1, cpu=not self.self_play, char=char)
         self.activated = False if actor_id == 0 else True
 
         self.write_locations()
         self.init_state_queue(self.state)
 
         self.action_list = []
-        self.opp_action_list = [] if self.self_play else None
+        self.opp_action_list = []
         self.last_action = 0
-        self.opp_last_action = 0 if self.self_play else None
+        self.opp_last_action = 0
         self.last_action_id = 0
-        self.opp_last_id = 0 if self.self_play else None
+        self.opp_last_action_id = 0
         self.last_action_wait = 3
-        self.opp_last_action_wait = 3 if self.self_play else None
+        self.opp_last_action_wait = 3
         self.reward_latency = 0
         self.status_detect_freq = 60 + 15
         self.action_queue = [0 for _ in range(5)]
         self.status_hist = [0, 0, 0, 0]
-        self.opp_status_hist = [0, 0, 0, 0] if self.self_play else None
+        self.opp_status_hist = [0, 0, 0, 0]
 
         self.scores = [np.nan for _ in range(60 * 15)]
         self.scores_hist = []
@@ -139,7 +147,7 @@ class Actor:
         self.communicate_freq = 60 * 10
         # self.trajectory = Trajectory(ep_length, 1)
         self.observation = np.zeros(env.observation_space, dtype=np.float32)
-        self.opp_observation = np.zeros(env.observation_space, dtype=np.float32) if self_play else None
+        self.opp_observation = np.zeros(opp_env.observation_space, dtype=np.float32)
 
         self.trajectory = {
             'state': np.array(
@@ -153,7 +161,7 @@ class Actor:
         if self.self_play:
             # self.opp_trajectory = Trajectory(ep_length, -1)
             self.opp_trajectory = {
-                'state': np.array([np.zeros(env.observation_space, ) for _ in range(self.episode_length)],
+                'state': np.array([np.zeros(opp_env.observation_space, ) for _ in range(self.episode_length)],
                                   dtype=np.ndarray),
                 'action': np.zeros((self.episode_length,), dtype=np.int32),
                 'rew': np.zeros((self.episode_length,), dtype=np.float32),
@@ -182,8 +190,8 @@ class Actor:
         self.dolphin_proc.close()
         self.state = GameMemory()
         self.sm = StateManager(self.state)
-        self.mm.setup_move(self.pad, 1, cpu=not self.self_play)
-        self.dolphin_proc.run()
+        # self.mm.setup_move(self.pad, 1, cpu=not self.self_play)
+        self.dolphin_proc.run(self.opp_char, self.char)
 
     def write_locations(self):
         locations = self.sm.locations()
@@ -194,10 +202,7 @@ class Actor:
     def init_state_queue(self, dummy):
         self.state_queue = [deepcopy(dummy) for _ in range(5)]
         # self.opp_state_queue = [deepcopy(dummy) for _ in range(5)] if self.self_play else None
-        if self.self_play:
-            self.opp_state_queue = [deepcopy(dummy) for _ in range(5)]
-        else:
-            self.opp_state_queue = None
+        self.opp_state_queue = [deepcopy(dummy) for _ in range(5)]
 
     def setup_context(self):
         context = zmq.Context()
@@ -323,16 +328,25 @@ class Actor:
 
     def randomize_opp(self):
         checkpoints = []
+        chars = []
         try:
-            for (_, _, filenames) in walk(self.ckpt_dir):
-                for filename in filenames:
-                    if "index" in filename:
-                        checkpoints.append(self.ckpt_dir + "\\" + filename)
+            for (_, dirs, _) in walk(self.enemy_path):
+                for dir in dirs:
+                    checkpoints.append(dir)
+                    chars.append(dir.split('--')[0])
                 break
-            random_ckpt = np.random.choice(checkpoints)
-            status = self.checkpoint.restore(random_ckpt).expect_partial()
+            random_index = np.random.randint(0, len(checkpoints))
+            random_ckpt = checkpoints[random_index]
+            self.opp_char = chars[random_index]
+            for (_, _, files) in walk(self.enemy_path + "/" + random_ckpt):
+                ckpts = []
+                for file in files:
+                        return self.enemy_path + "/" + random_ckpt + "/" + file.split('.')[0]
+
         except Exception as e:
-            print("Couldn't randomize opp:", e)
+            print("Couldn't load opp:", e)
+
+        return None
 
     def check_episode(self, mode='normal'):
     
@@ -371,7 +385,8 @@ class Actor:
         return False
 
     def evaluate(self, death_loss=1.0, p1=0, p2=1, mode="normal"):
-        is_off_stage = abs(self.state_queue[-1].players[p2].pos_x) > 60  # fd  60# bf
+        is_off_stage = abs(self.state_queue[-1].players[p2].pos_x) > 60 or self.state_queue[-1].players[
+            p2].pos_y < -1  # fd  60# bf
         off_stage_kill_bonus = 1.2 if is_off_stage else 1.0
         done = self.isDead(p2, mode=mode)
         #if done:
@@ -399,11 +414,7 @@ class Actor:
         #    print(r - rr)
         return np.nan_to_num(np.float32(r), True)#, np.float32(rr)
 
-    def choose_action(self, state=None, mode="normal", random=False):
-        if self.n_warmup > self.steps:
-            #  print("random action")
-            return np.random.choice(self.action_space.len)
-
+    def choose_action(self, state=None, mode="normal"):
         if mode == "normal":
             self.steps += 1
             return self.policy.get_action(state)
@@ -438,9 +449,11 @@ class Actor:
 
     def update_obs(self, player, delay=0, last_action_id=0):
         if player == 1:
-            convertState2Array(self.state, self.observation, p1=0, p2=1, last_action_id=last_action_id, sym=False)
+            convertState2Array(self.state, self.observation, p1=0, p2=1, last_action_id=last_action_id,
+                               action_space_len=self.action_space.len, sym=False)
         else:
-            convertState2Array(self.state, self.opp_observation, p1=1, p2=0, last_action_id=last_action_id, sym=False)
+            convertState2Array(self.state, self.opp_observation, p1=1, p2=0, last_action_id=last_action_id,
+                               action_space_len=self.opp_action_space.len, sym=False)
 
     def advance(self, p1, p2):
         if self.frame_start == -1:
@@ -457,8 +470,8 @@ class Actor:
                     self.queue_state()
 
                     # AI
-                    last_action_id = self.trajectory['action'][(self.current_episode_length-1) % self.episode_length]
-                    self.update_obs(p2, last_action_id=last_action_id)
+                    # last_action_id = self.trajectory['action'][(self.current_episode_length-1) % self.episode_length]
+                    self.update_obs(p2, last_action_id=self.last_action_id)
                     action_id, r_state = self.choose_action(self.observation)
 
                     if action_id == self.action_space.len:
@@ -487,17 +500,17 @@ class Actor:
                             action
                         )
 
-            if self.self_play and not self.opp_action_list:
+            if not self.opp_action_list:
                 if self.state.frame - self.opp_last_action >= self.opp_last_action_wait:
                     """OPP DECISION MAKING"""
                     self.queue_state(mode="opp")
 
-                    last_action_id = self.opp_trajectory['action'][(self.opp_current_episode_length-1) % self.episode_length]
-                    self.update_obs(p1, last_action_id=last_action_id)
+                    # last_action_id = self.opp_trajectory['action'][(self.opp_current_episode_length-1) % self.episode_length]
+                    self.update_obs(p1, last_action_id=self.opp_last_action_id)
 
                     opp_action_id, r_state = self.choose_action(self.opp_observation, mode="opp")
 
-                    if opp_action_id == self.action_space.len:
+                    if opp_action_id == self.opp_action_space.len:
                         print('error action nan ?')
                         opp_action_id = 0
                         self.opp.l1.reset_states()
@@ -505,11 +518,11 @@ class Actor:
                     #if self.state.players[p1].pos_x < 0:
                     #    opp_action = self.action_space[self.action_space.sym[opp_action_id]]
                     #else:
-                    opp_action = self.action_space[opp_action_id]
+                    opp_action = self.opp_action_space[opp_action_id]
 
-
-                    self.store_transition(opp_action_id, deepcopy(self.opp_observation), mode='opp')
-                    self.recurrent_state[1] = r_state
+                    if self.self_play:
+                        self.store_transition(opp_action_id, deepcopy(self.opp_observation), mode='opp')
+                        self.recurrent_state[1] = r_state
                     # if wavedashing in air, choose random action
                     # if isinstance(action, list):
                     #    if not self.state.players[1].on_ground and (action[1]['L'][0] == 0.8 or action[1]['L'][0] == 0.2):
@@ -536,7 +549,7 @@ class Actor:
                 self.last_action = self.state.frame
                 self.last_action_id = action['id']
 
-            if self.self_play and self.opp_action_list and self.state.frame - self.opp_last_action >= self.opp_last_action_wait:
+            if self.opp_action_list and self.state.frame - self.opp_last_action >= self.opp_last_action_wait:
                 """OPP ACTING"""
                 opp_action = self.opp_action_list.pop(0)
 
@@ -617,12 +630,13 @@ class Actor:
 
     def run(self):
         # Copying nn from learner
-        self.dolphin_proc.run()
+        self.dolphin_proc.run(self.opp_char, self.char)
         tries = 15
         # test
         act, self.recurrent_state[0] = self.policy.get_action(self.observation)
         if self.self_play:
             act, self.recurrent_state[1] = self.opp.get_action(self.observation)
+
             
         if self.id == 0:
                 print('getting params from learner...')

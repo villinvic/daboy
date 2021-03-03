@@ -4,11 +4,7 @@ import os
 import errno
 import numpy as np
 from threading import Thread
-from Pad import Action_Space
-from MeleeEnv import MeleeEnv
 
-action_space = Action_Space()
-dummy_env = MeleeEnv()
 
 def make_async(xs):
         threads = len(xs) * [None]
@@ -50,9 +46,13 @@ def get_rew( transition):
     
 def set_0( value):
         return 0
-        
+
+
+'''
 def sym_action_b( action):
         return action_space.sym[action]
+
+
 def sym_state_b( state):
         last_action = state[-MeleeEnv.action_space.len-1:-1]
         last_action_id = np.argwhere(last_action==1)
@@ -73,9 +73,9 @@ def sym_state_b( state):
         state[399+399] = -state[399+399]
         
         return state
+'''
         
-        
-sym_action = np.vectorize( sym_action_b)
+# sym_action = np.vectorize( sym_action_b)
 reset_0 = np.vectorize( set_0)
 map_np_state = np.vectorize( get_np_state)
 map_action = np.vectorize( get_action)
@@ -137,7 +137,7 @@ def write_with_folder(path, text):
     with open(path, "w") as f:
         f.write(text)
 
-def convertState2Array(state, observation, p1=0, p2=1, last_action_id=0, sym=False):
+def convertState2Array(state, observation, p1=0, p2=1, last_action_id=0, action_space_len=1, sym=False):
     if sym:
         if state.players[p2].pos_x >= 0:
                 sym = False
@@ -146,8 +146,8 @@ def convertState2Array(state, observation, p1=0, p2=1, last_action_id=0, sym=Fal
     loadplayerinfo(state, observation, player_num=p1, order=0, sym=sym)
     loadplayerinfo(state, observation, player_num=p2, order=1, sym=sym)
     
-    observation[802: 802 + dummy_env.action_space.len] = 0.0
+    observation[802: 802 + action_space_len] = 0.0
     observation[802 + last_action_id] = 1.0
-    observation[802 + dummy_env.action_space.len] = dist
+    observation[802 + action_space_len] = dist
     
     np.nan_to_num(observation, False)
