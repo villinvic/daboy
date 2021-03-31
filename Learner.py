@@ -9,7 +9,22 @@ import socket
 
 
 class ACLearner:
-    def __init__(self, net, check_point_manager, traj_length, params, batch_size, is_localhost):
+    def __init__(self, net, checkpoint_manager, traj_length, params, batch_size, is_localhost):
+        '''
+        Learner class
+        accepts data sent from SSBM_ENV classes in an experience queue
+        uses the data in a training loop.
+        Regularly send to the environments the new network weights.
+
+        net : base network class.
+        checkpoint_manager: checkpointManager class used for saving the network.
+        traj_length : trajectory length, must be the same as the one specified in SSBM_ENV.
+        params : some params to send to the environments, such as the distance reward scale.
+        batch_size :  batch size is a trade of between convergence speed and stability.
+            Higher batch size = higher stability
+        is_localhost : must be true if testing or training on only one machine.
+
+        '''
 
         self.ip = '127.0.0.1' if is_localhost else socket.gethostbyname(socket.gethostname())
         self.params = params
@@ -20,7 +35,7 @@ class ACLearner:
         self.writer = tf.summary.create_file_writer(log_dir)
         self.writer.set_as_default()
         tf.summary.experimental.set_step(0)
-        self.checkpoint_manager = check_point_manager
+        self.checkpoint_manager = checkpoint_manager
         self.flush_freq = 100
         self.save_ckpt_freq = int(10000/float(batch_size))
         self.gc_freq = 3000
@@ -45,24 +60,23 @@ class ACLearner:
 
 
     def learn(self):
+
         self.cntr += 1
+
+        # Get experience from the queue
         trajectory = pd.DataFrame(self.exp[:self.batch_size]).values
         self.exp = self.exp[self.batch_size:]
 
-        #print(np.stack(trajectory[:, -1], axis = 0)[:, 1:])
+        # Cook data
         states = np.float32(np.stack(trajectory[:, 0], axis = 0))
         actions = np.float32(np.stack(trajectory[:, 1], axis = 0)[:, :-1])
         rews = np.float32(np.stack(trajectory[:, 2], axis = 0)[:, 1:])
         r_states = np.stack(trajectory[:, 3], axis = 0)[:, 0,:]
-        # states, actions, rews = self.compute_traj(trajectory)
-        # print('etc  ', time() - self.time)  # 0.14
-        with tf.summary.record_if(self.cntr % self.write_summary_freq == 0):
-            # t = time()
-            self.AC.train( states, actions, rews, r_states)
-            # print('train', time() - t)  # 0.0
 
-        # self.time = time()
-        
+
+        # Train
+        with tf.summary.record_if(self.cntr % self.write_summary_freq == 0):
+            self.AC.train( states, actions, rews, r_states)
         
         try:
             r = 0
@@ -92,7 +106,7 @@ class ACLearner:
         self.exp_socket = context.socket(zmq.PULL)
         self.exp_socket.bind("tcp://%s:5557" % self.ip)
         self.blob_socket = context.socket(zmq.PUB)
-        self.blob_socket.bind("tcp://%s:5555" % self.ip)
+        self.blob_socket.bind("tcp://%s:5558" % self.ip)
         self.topic = b''
         self.eval_socket = context.socket(zmq.PULL)
         self.eval_socket.bind("tcp://%s:5556" % self.ip)
@@ -117,9 +131,7 @@ class ACLearner:
                 received = 0
                 while received < self.rcv_amount:
                     traj = self.exp_socket.recv_pyobj(zmq.NOBLOCK)
-                    # sym_traj = self.gen_sym_traj(traj) # off policy
                     self.exp.append(traj)
-                    # self.exp.append(sym_traj)
                     received += 1
             except zmq.ZMQError:
                 pass

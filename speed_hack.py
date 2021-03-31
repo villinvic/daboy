@@ -50,7 +50,7 @@ char_ids = {
     'dk': 0x1,
     'fox': 0x2,
     'gaw': 0x3,
-    'kirby': 0x4,
+    # 'kirby': 0x4, # weird action states
     'bowser': 0x5,
     'link': 0x6,
     'luigi': 0x7,
@@ -70,7 +70,7 @@ char_ids = {
     'ylink': 0x15,
     'doc': 0x16,
     'roy': 0x17,
-    'pichu': 0x18,
+    # 'pichu': 0x18, # bad
     'ganon': 0x19,
 }
 

@@ -1,9 +1,7 @@
 import enum
 import zmq
-import numpy as np
 import os
-import sys
-from copy import deepcopy
+import platform
 
 @enum.unique
 class UsefullButton(enum.Enum):
@@ -43,6 +41,7 @@ class Stick(enum.Enum):
     
 sh_dict = {
         'mario':3,
+        'luigi':3,
         'ganon':3,
 }
 
@@ -169,6 +168,11 @@ class Action_Space(dict):
 
     def __init__(self, char='ganon'):
         dict.__init__(self)
+        self.len = 0
+
+        if char is None :
+            return
+
         self.stick_states = [
             (0.5, 0.5),
             (1.0, 0.5),
@@ -200,11 +204,12 @@ class Action_Space(dict):
             (0.5, 0.7)
         ]
 
-        self.len = 0
-
         for s_state in self.stick_states:
             for item in UsefullButton:
-                if not (char in ['mario'] and item.name=='b' and (s_state[1] == 0.0 or s_state[0] != 0.5)): # down b requires side b
+                if item.name == 'X' :
+                    self.add(ControllerState(button=item.name, stick=s_state, duration=sh_dict[char] + 1))
+                
+                elif not (char in ['mario', 'luigi'] and item.name=='b' and (s_state[1] == 0.0 or s_state[0] != 0.5)): # down b requires side b
                     self.add(ControllerState(button=item.name, stick=s_state))
 
             for sc_state in self.smash_states:
@@ -220,9 +225,10 @@ class Action_Space(dict):
         for s_state in self.tilt_stick_states:
             self.add(ControllerState(button='A', stick=s_state))
 
-        # WAVE LAND
-        self.add(ControllerState(button='L', stick=(0.2, 0.3), duration=3))
-        self.add(ControllerState(button='L', stick=(0.8, 0.3), duration=3))
+         # WAVE LAND
+        sh = [ControllerState(button='X', duration=sh_dict[char]), ControllerState(duration=1)]
+        self.add(sh+[ControllerState(button='L', stick=(0.05, 0.3), duration=1)])
+        self.add(sh+[ControllerState(button='L', stick=(0.95, 0.3), duration=1)])
 
         # shield grab
         sg = ControllerState(button='L')
@@ -245,6 +251,9 @@ class Action_Space(dict):
             self.add([leftb, left])
             self.add([rightb, right])
             self.add([downb, down])
+            
+            self.add(sh) # short hop
+            
             
         
         no_op = ControllerState()
@@ -269,33 +278,48 @@ class Action_Space(dict):
 class Pad:
     """Writes out controller inputs."""
 
-    def __init__(self, path):
+    def __init__(self, path, port=None):
         """Create, but do not open the fifo."""
         self.pipe = None
         self.path = path
+        self.windows = port is not None
+        self.port = port
         self.message = ""
         self.action_space = []
 
         
-        
     def connect(self):
-        try:
-                os.unlink(self.path)
-        except:
-                pass
-                
-        os.mkfifo(self.path)
+        if self.windows:
+            context = zmq.Context()
+            with open(self.path, 'w') as f:
+                f.write(str(self.port))
 
-        self.pipe = open(self.path, 'w', buffering=1)
+            self.pipe = context.socket(zmq.PUSH)
+            address = "tcp://127.0.0.1:%d" % self.port
+            print("Binding pad %s to address %s" % (self.path, address))
+            self.pipe.bind(address)
+        else:
+            try:
+                    os.unlink(self.path)
+            except:
+                    pass
+
+            os.mkfifo(self.path)
+
+            self.pipe = open(self.path, 'w', buffering=1)
 
     def __exit__(self, *args):
         pass
         
     def unbind(self):
-        self.pipe.close()
+        if not self.windows:
+            self.pipe.close()
 
     def flush(self):
-        self.pipe.write(self.message)
+        if self.windows:
+            self.pipe.send_string(self.message)
+        else:
+            self.pipe.write(self.message)
         self.message = ""
 
     def write(self, command, buffering=False):

@@ -1,5 +1,5 @@
 import numpy as np
-from MeleeEnv import Transition, Trajectory, MeleeEnv
+from Spaces import Transition, Trajectory, Spaces
 from typing import *
 
 
@@ -12,7 +12,7 @@ class ReplayBuffer:
         self.last_cntr = 0
 
         self.trajectories = np.array([{
-            'state': np.array([np.zeros(MeleeEnv.observation_space, ) for _ in range(traj_length)], dtype=np.ndarray),
+            'state': np.array([np.zeros(Spaces.observation_space, ) for _ in range(traj_length)], dtype=np.ndarray),
             'action': np.zeros((traj_length,), dtype=np.int32),
             'rew': np.zeros((traj_length,), dtype=np.float32),
         } for _ in range(self.mem_size)])

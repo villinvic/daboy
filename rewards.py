@@ -14,42 +14,6 @@ def is_dead(p_num, states):  # 2 states
         (states[-1].players[p_num].action_state.value <= 0xA) and (states[0].players[p_num].action_state.value > 0xA))
 
 
-"""
-def isTeching(p_num):
-    if .status_hist[p_num] == 0:
-        for state in self.state_queue:
-            if 0x00C7 <= state.players[p_num].action_state.value <= 0x00CC:
-                if self.id == 0:
-                    print('player', p_num, 'techd.')
-                self.status_hist[p_num] = 55
-                return True
-    return False
-
-
-def isRespawning(p_num):
-    for state in self.state_queue:
-        if state.players[p_num].action_state.value <= 0x0C:
-            return True
-    return False
-
-
-def is_done(self, players=[0, 1]):
-    for p_num in players:
-        if self.isDead(p_num):
-            if self.id == 0:
-                print('Done.')
-            return True
-
-    return False
-
-
-def isSpecialFalling(self, p_num):
-    return (0x0023 <= self.state.players[p_num].action_state.value <= 0x0025) and abs(
-        self.state.players[p_num].pos_x) < 60
-
-"""
-
-
 def compute_all_rewards(states, mode, damage_ratio=0.01, distance_ratio=0.0003, loss_intensity=1, death_scale=1.0):
     if mode == 1:
         p1 = 0
@@ -88,13 +52,13 @@ def compute_rewards(states, p1, p2, damage_ratio, distance_ratio, loss_intensity
       A length T numpy array with the rewards on each transition.
     """
 
+    momentum_x = states[-1].players[p2].self_air_vel_x + states[-1].players[p2].speed_ground_x_self
     if distance_ratio == 0.0:
         distance_rwd = 0
         d2 = distance(states[-1])
     else:
         dx = sign(states[-1].players[p2].pos_x - states[-1].players[p1].pos_x)
         dy = sign(states[-1].players[p2].pos_y - states[-1].players[p1].pos_y)
-        momentum_x = states[-1].players[p2].self_air_vel_x + states[-1].players[p2].speed_ground_x_self
         momentum_y = states[-1].players[p2].self_air_vel_y
         dist = np.sqrt(np.square(states[-1].players[p2].pos_x - states[0].players[p2].pos_x) + np.square(
             states[-1].players[p2].pos_y - states[0].players[p2].pos_y))
@@ -117,12 +81,19 @@ def compute_rewards(states, p1, p2, damage_ratio, distance_ratio, loss_intensity
     edge_guard_boost = 1.0
     combo_bonus = 1.0
     dist_from_center = np.abs(states[-1].players[p2].pos_x)
-    if dist_from_center > 57 and not states[-1].players[p2].on_ground:
-        edge_guard_boost += np.clip((dist_from_center - 57) / 30.0, 0, 2)
+    if dist_from_center > 59 and not states[-1].players[p2].on_ground:
+        edge_guard_boost += np.clip((dist_from_center - 57) / 40.0, 0, 2)
     if states[0].players[p1].hitstun >= 1:
         combo_bonus = 1.25
-
-    dmg_reward = compute_damages(p1, states) * edge_guard_boost * combo_bonus - compute_damages(p2, states)
+        
+    
+    if  0x0023 <= states[-1].players[p2].action_state.value <= 0x0025 :
+        fall_special_penalty = 0.02
+    
+    else :
+        fall_special_penalty = 0
+    
+    dmg_reward = compute_damages(p1, states) * edge_guard_boost * combo_bonus - compute_damages(p2, states) - fall_special_penalty
     total = distance_rwd * distance_ratio + dmg_reward * damage_ratio
     # total = distance_rwd + sum(losses[p] for p in enemies) - (sum(losses[p] for p in allies))
     # if total < 0:

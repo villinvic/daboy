@@ -1,4 +1,4 @@
-from RERPI import *
+from RL import *
 import gym
 from Memory import MemoryBuffer
 import datetime

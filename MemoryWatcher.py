@@ -2,7 +2,7 @@ import binascii
 import zmq
 import socket
 import os
-
+import platform
 
 def chunk(l, n):
     return [l[i:i + n] for i in range(0, len(l), n)]
@@ -34,16 +34,21 @@ class MemoryWatcherZMQ:
         self.id = _id
         self.messages = None
         self.exited = False
+        self.windows = platform.system() == 'windows'
 
         #write_with_folder(self.path, '5555')
 
         context = zmq.Context()
         self.alert_socket = context.socket(zmq.PUSH)
         self.alert_socket.connect("tcp://127.0.0.1:7555")
-        self.socket = context.socket(zmq.REP)
-        self.socket.bind("ipc://" + path)
-        self.socket.setsockopt(zmq.RCVTIMEO, 10000)
-        self.socket.setsockopt(zmq.LINGER, 0)
+        if self.windows:
+            self.socket = context.socket(zmq.PULL)
+            self.socket.bind("tcp://127.0.0.1:%d" % 5555)
+        else :
+            self.socket = context.socket(zmq.REP)
+            self.socket.bind("ipc://" + path)
+            self.socket.setsockopt(zmq.RCVTIMEO, 10000)
+            self.socket.setsockopt(zmq.LINGER, 0)
 
     def __exit__(self, *args):
         """Closes the socket."""
@@ -72,16 +77,17 @@ class MemoryWatcherZMQ:
                 message = message.decode('utf-8')
                 self.messages = parseMessage(message)
             except zmq.ZMQError as e:
-                if not self.exited :
-                        self.alert_socket.send_pyobj(self.id)
+                if not self.exited:
+                    self.alert_socket.send_pyobj(self.id)
                 
 
         return self.messages
 
     def advance(self):
-        try:
+        if not self.windows:
+            try:
                 self.socket.send(b'')
-        except zmq.ZMQError:
+            except zmq.ZMQError:
                 pass
         self.messages = None
         

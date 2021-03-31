@@ -19,7 +19,7 @@ class DolphinInitializer:
         self.n =-1
         self.test = test
         
-    def run(self, char1, char2):
+    def run(self, char1=None, char2=None):
         config_path = '../dolphin/User/Config/Dolphin.ini'
         game_config_path = '../dolphin/User/GameSettings/GALE01.ini'
         if self.actor <= self.n or self.video != "Null":
@@ -57,7 +57,9 @@ class DolphinInitializer:
             char1 = input()
             assert char1 in char_ids.keys()
                 
-        playertype = PlayerStatus.HUMAN
+        playertype = PlayerStatus.CPU if char1 is None else PlayerStatus.HUMAN
+        if char1 is None :
+            char1 = np.random.choice(list(char_ids.keys()))
         gconfig = gconfig[0] + '$Setup match' + setup_match_code('battlefield', player1=playertype, char1=char1, char2=char2)
         if self.test or self.video != "Null":
             enabled = """

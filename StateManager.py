@@ -1,13 +1,61 @@
 import struct
+import numpy as np
+from dataclasses import dataclass, field
+from typing import List
 
-from State import State
-from State import PlayerType
-from State import Character
-from State import Menu
-from State import Stage
-from State import ActionState
-from State import BodyState
-from MeleeEnv import *
+from State import *
+
+
+@dataclass
+class PlayerMemory:
+    '''
+    Here is stored every information for a given player
+    '''
+    percent: np.int32
+    facing: np.float32
+    pos_x: np.float32
+    pos_y: np.float32
+    action_state: np.int32
+    action_counter: np.int32
+    action_frame: np.float32
+    character: np.int32
+    body_state: np.bool
+    hitlag: np.float32
+    hitstun: np.float32
+    jumps_used: np.int32
+    charging_smash: np.bool
+    on_ground: np.bool
+    self_air_vel_x: np.float32
+    speed_ground_x_self: np.float32
+    self_air_vel_y: np.float32
+    attack_vel_x: np.float32
+    attack_vel_y: np.float32
+    shield_size: np.float32
+    cursor_x: np.float32
+    cursor_y: np.float32
+
+    def __init__(self):
+        return
+
+
+def player_fac():
+    return [PlayerMemory(), PlayerMemory()]
+
+
+@dataclass
+class GameMemory:
+    frame: np.int32
+    menu: np.int32
+    stage: np.int32
+    players: List[PlayerMemory] = field(default_factory=player_fac())
+
+    # stage select screen
+    # sss_cursor_x: np.float32
+    # sss_cursor_y: np.float32
+
+    def __init__(self):
+        self.players = player_fac()
+        return
 
 
 def int_handler(obj, name, shift=0, mask=0xFFFFFFFF, wrapper=None, default=0):
@@ -67,6 +115,10 @@ def add_address(x, y):
 class StateManager:
     """Converts raw memory changes into attributes in a State object."""
 
+    '''
+    TODO : projectiles
+    '''
+
     def __init__(self, state, test=False):
         """Pass in a State object. It will have its attributes zeroed."""
         self.state = state
@@ -74,7 +126,7 @@ class StateManager:
 
         if test:
             self.addresses['804D7420'] = int_handler(self.state, 'frame')
-        else:
+        else:  # If not testing, we are running with speedhack gecko code, which requires slippi's frame counter
             self.addresses['804d6cf4'] = int_handler(self.state, 'frame') # slippi
         self.addresses['80479D30'] = int_handler(self.state, 'menu', 0, 0xFF, Menu, Menu.Characters)
         self.addresses['804D6CAC'] = int_handler(self.state, 'stage', 8, 0xFF, Stage, Stage.Unselected)
