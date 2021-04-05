@@ -386,7 +386,7 @@ class SSBM_ENV:
             self.advance()
 
         elif self.state.menu == S.Menu.Characters or self.state.menu == S.Menu.Stages:
-            self.mm.pick_char(self.state, self.pad)
+            self.mm.press_start_lots(self.state, self.pad[1])
 
         elif self.state.menu == S.Menu.PostGame:
             self.mm.press_start_lots(self.state, self.pad[1])

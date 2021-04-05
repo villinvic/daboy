@@ -15,7 +15,7 @@ def run(learner_ip='127.0.0.1', self_play=True, enemy_path='enemies',
         Runs an environment.
         Cf actor_runner.py for training.
 
-        test: if --test is specified, the port number 1 will be set to be controlled by a human controller.
+        test: if --test is specified, the port number 1 will be set to be controlled by a human.
         '''
 
         if test:
