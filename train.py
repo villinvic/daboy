@@ -14,17 +14,17 @@ tf.config.experimental.set_memory_growth(physical_devices[0], enable=True)
 
 
 def run(learning_rate=1e-4,
-        discount_factor=0.994,
+        discount_factor=0.995,
         load_checkpoint=False,
         output_dir='checkpoints',   # folder where checkpoints are saved
         epsilon=0.01,               # must be the same value in SSBM_ENV, random move probability
         gae_lambda=1.0,
-        alpha=6e-4,                 # Entropy bonus scale
+        alpha=8e-4,                 # Entropy bonus scale
         ep_length=20*10+1,
         batch_size=8,
         neg_scale=0.95,             # Scaling of negative rewards, breaks symmetry
         dist_scale=0.,              # Distance scale
-        dmg_scale=0.01,             # Damage scale
+        dmg_scale=0.008,             # Damage scale
         localhost=False,
         char='ganon',               # Must be the same in SSBM_ENV
         gpu=0,                      # If no gpu, set to -1

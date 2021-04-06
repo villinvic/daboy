@@ -42,6 +42,7 @@ class Stick(enum.Enum):
 sh_dict = {
         'mario':3,
         'luigi':3,
+        'ylink':3,
         'ganon':3,
 }
 
@@ -170,7 +171,7 @@ class Action_Space(dict):
         dict.__init__(self)
         self.len = 0
 
-        if char is None :
+        if char is None:
             return
 
         self.stick_states = [
@@ -204,73 +205,124 @@ class Action_Space(dict):
             (0.5, 0.7)
         ]
 
-        for s_state in self.stick_states:
-            for item in UsefullButton:
-                if item.name == 'X' :
-                    self.add(ControllerState(button=item.name, stick=s_state, duration=sh_dict[char] + 1))
-                
-                elif not (char in ['mario', 'luigi'] and item.name=='b' and (s_state[1] == 0.0 or s_state[0] != 0.5)): # down b requires side b
-                    self.add(ControllerState(button=item.name, stick=s_state))
+        if char == 'ylink':
+            # regular
+            for s_state in self.stick_states:
+                # no button
+                self.add(ControllerState(stick=s_state))
 
+                for button in ['A', 'B', 'L']:
+                    self.add(ControllerState(button=button, stick=s_state))
+
+            # tilt
+            for s_state in self.tilt_stick_states:
+                self.add(ControllerState(button='A', stick=s_state))
+            # c stick
+            # add all directions ??
             for sc_state in self.smash_states:
-                self.add(ControllerState(stick=s_state, c_stick=sc_state))
+                self.add(ControllerState(c_stick=sc_state))
 
-            # no button
-            self.add(ControllerState(stick=s_state))
+            # short hop, full jump
+            sh = [ControllerState(button='X', duration=sh_dict[char]), ControllerState(duration=1)]
+            self.add(sh)
+            self.add(ControllerState(button='X', duration=sh_dict[char] + 1))
 
-        # Specific techs:
+            # shield drop
+            self.add([ControllerState(button='L', stick=(0.5, 0.5)),
+                      ControllerState(button='L', stick=(0.13, 0.5), duration=1),
+                      ])
+            # jump grab, shield grab, neutral z
+            sg = ControllerState(button='L')
+            sg['A'] = 1
+            self.add(sg)
+            self.add([
+                ControllerState(button='X', duration=1),
+                ControllerState(button='Z', duration=2)
+            ])
+            # useful for L cancel
+            self.add(ControllerState(button='Z'))
 
-        # tilt
+            # wave land
+            self.add(ControllerState(button='L', stick=(0.023, 0.353), duration=3))
+            self.add(ControllerState(button='L', stick=(0.097, 0.353), duration=3))
+            # wave dash
+            self.add(sh + [ControllerState(button='L', stick=(0.023, 0.353), duration=1)])
+            self.add(sh + [ControllerState(button='L', stick=(0.097, 0.353), duration=1)])
 
-        for s_state in self.tilt_stick_states:
-            self.add(ControllerState(button='A', stick=s_state))
+            # no op
+            no_op = ControllerState()
+            no_op.no_op = True
+            self.add(no_op)
 
-         # WAVE LAND
-        sh = [ControllerState(button='X', duration=sh_dict[char]), ControllerState(duration=1)]
-        self.add(sh+[ControllerState(button='L', stick=(0.05, 0.3), duration=1)])
-        self.add(sh+[ControllerState(button='L', stick=(0.95, 0.3), duration=1)])
+        else :
 
-        # shield grab
-        sg = ControllerState(button='L')
-        sg['A'] = 1
-        self.add(sg)
+            for s_state in self.stick_states:
+                for item in UsefullButton:
+                    if item.name == 'X' :
+                        self.add(ControllerState(button=item.name, stick=s_state, duration=sh_dict[char] + 1))
 
-        # jumpgrab
-        jump1 = ControllerState(button='X', duration=1)
-        grab = ControllerState(button='Z', ac=True)
-        jgrab = [jump1, grab]
-        self.add(jgrab)
-        
-        if char in  ['mario', 'luigi']:
-            leftb = ControllerState(button='B', stick=(0.0, 0.5), duration=1)
-            rightb = ControllerState(button='B', stick=(1.0, 0.5), duration=1)
-            left = ControllerState(stick=(0.0, 0.5), duration=1)
-            right = ControllerState(stick=(1.0, 0.5), duration=1)
-            downb = ControllerState(button='B', stick=(0.5, 0.0), duration=1)
-            down = ControllerState(stick=(0.5, 0.0), duration=1)
-            self.add([leftb, left])
-            self.add([rightb, right])
-            self.add([downb, down])
-            
-            self.add(sh) # short hop
-            
-            
-        
-        no_op = ControllerState()
-        no_op.no_op = True
-        self.add(no_op)
+                    elif not (char in ['mario', 'luigi'] and item.name=='b' and (s_state[1] == 0.0 or s_state[0] != 0.5)): # down b requires side b
+                        self.add(ControllerState(button=item.name, stick=s_state))
+
+                for sc_state in self.smash_states:
+                    self.add(ControllerState(stick=s_state, c_stick=sc_state))
+
+                # no button
+                self.add(ControllerState(stick=s_state))
+
+            # Specific techs:
+
+            # tilt
+
+            for s_state in self.tilt_stick_states:
+                self.add(ControllerState(button='A', stick=s_state))
+
+             # WAVE LAND
+            sh = [ControllerState(button='X', duration=sh_dict[char]), ControllerState(duration=1)]
+            self.add(sh+[ControllerState(button='L', stick=(0.05, 0.3), duration=1)])
+            self.add(sh+[ControllerState(button='L', stick=(0.95, 0.3), duration=1)])
+
+            # shield grab
+            sg = ControllerState(button='L')
+            sg['A'] = 1
+            self.add(sg)
+
+            # jumpgrab
+            jump1 = ControllerState(button='X', duration=1)
+            grab = ControllerState(button='Z', ac=True)
+            jgrab = [jump1, grab]
+            self.add(jgrab)
+
+            if char in  ['mario', 'luigi']:
+                leftb = ControllerState(button='B', stick=(0.0, 0.5), duration=1)
+                rightb = ControllerState(button='B', stick=(1.0, 0.5), duration=1)
+                left = ControllerState(stick=(0.0, 0.5), duration=1)
+                right = ControllerState(stick=(1.0, 0.5), duration=1)
+                downb = ControllerState(button='B', stick=(0.5, 0.0), duration=1)
+                down = ControllerState(stick=(0.5, 0.0), duration=1)
+                self.add([leftb, left])
+                self.add([rightb, right])
+                self.add([downb, down])
+
+                self.add(sh) # short hop
 
 
-        #self.build_sym()
-        
 
-        # for i in range(self.len):
-        #    if isinstance(self[i], list):
-        #        print(i, self[i][0])
-        #    else:
-        #        print(i, self[i])
-        print("Action_space :", self.len)
-        # print(self.sym)
+            no_op = ControllerState()
+            no_op.no_op = True
+            self.add(no_op)
+
+
+            #self.build_sym()
+
+
+            # for i in range(self.len):
+            #    if isinstance(self[i], list):
+            #        print(i, self[i][0])
+            #    else:
+            #        print(i, self[i])
+            print("Action_space :", self.len)
+            # print(self.sym)
         
         
 

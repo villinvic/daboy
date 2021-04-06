@@ -110,7 +110,7 @@ class SSBM_ENV:
         self.last_action_wait = [3] * 2
         self.status_detect_freq = 60 + 15
 
-        self.status_hist = [[0, 0, 0, 0]] * 2
+        self.status_hist = [[0, 0, 0, 0], [0, 0, 0, 0]]
 
         self.setup_context()
         self.frame_start = -1
