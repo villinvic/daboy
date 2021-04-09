@@ -9,7 +9,7 @@ import zmq
 
 def run(ip='127.0.0.1', self_play=True, n_actors=1, eval=False, enemy_dir='enemies',
         ep_length=20*10+1, dolphin_dir='../dolphin', iso_path='../isos/melee.iso',
-        video_backend='D3D', epsilon=0.01, render_all=False, char='ganon', restart_freq=45*60):
+        video_backend='D3D', epsilon=0.01, render_all=False, char='ganon', restart_freq=30*60):
 
         '''
         Run multiple actors processes,

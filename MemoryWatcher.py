@@ -34,7 +34,7 @@ class MemoryWatcherZMQ:
         self.id = _id
         self.messages = None
         self.exited = False
-        self.windows = platform.system() == 'windows'
+        self.windows = platform.system() == 'Windows'
 
         #write_with_folder(self.path, '5555')
 

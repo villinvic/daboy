@@ -328,7 +328,7 @@ class AC(tf.keras.Model):
             self.p_optim.apply_gradients(zip(grad, self.as_probs.trainable_variables))
 
             # Reward rare action_states with their negative log likelihood
-            rewards += tf.clip_by_value(NLL-tf.math.log(384.0*1.5), clip_value_min=0.0, clip_value_max=5.0) * self.as_scale
+            rewards += tf.clip_by_value(NLL-tf.math.log(400.0), clip_value_min=0.0, clip_value_max=10.0) * self.as_scale
             as_ent = tf.reduce_mean(tf.reduce_sum(tf.multiply(-tf.math.log(as_probs), as_probs), -1))
 
             with tf.GradientTape() as tape:

@@ -95,12 +95,12 @@ $Flash White on Successful L-Cancel
 
     def close(self):
         try:
+            sleep(0.3)
             self.proc.send_signal(signal.SIGINT)
             sleep(1.5)
             self.proc.send_signal(signal.SIGINT)
-            if self.actor > self.n:
-                sleep(1.5)
-                self.proc.send_signal(signal.SIGINT)
+            sleep(1.5)
+            self.proc.send_signal(signal.SIGINT)
             print('Sent signal to %d th Dolphin process ' % self.actor)
         except Exception as e:
             pass

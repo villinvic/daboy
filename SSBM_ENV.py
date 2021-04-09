@@ -42,7 +42,7 @@ class SSBM_ENV:
                  char, test):
         self.id = actor_id
 
-        self.windows = platform.system() == 'windows'
+        self.windows = platform.system() == 'Windows'
 
         # Signal handler
         signal.signal(signal.SIGINT, self.exit)
@@ -137,7 +137,7 @@ class SSBM_ENV:
         self.dist_scale = 0.
         self.dmg_scale = 0.01
 
-        self.max_reward_bug = 10 if not self.self_play else 50
+        self.max_reward_bug = 20 if not self.self_play else 50
         self.reward_bug_counter = 0
 
         self.ttt = 0  # debugging counter
@@ -429,7 +429,7 @@ class SSBM_ENV:
         tries = 15
         # Init values, needed because of eager execution
         act, self.recurrent_state[1] = self.policy[1].get_action(self.observation[1])
-        if self.self_play:
+        if not self.is_cpu:
             act, self.recurrent_state[0] = self.policy[0].get_action(self.observation[0])
 
         # Copying nn from Learner
