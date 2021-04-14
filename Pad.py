@@ -244,10 +244,10 @@ class Action_Space(dict):
 
             # wave land
             self.add(ControllerState(button='L', stick=(0.023, 0.353), duration=3))
-            self.add(ControllerState(button='L', stick=(0.097, 0.353), duration=3))
+            self.add(ControllerState(button='L', stick=(0.977, 0.353), duration=3))
             # wave dash
             self.add(sh + [ControllerState(button='L', stick=(0.023, 0.353), duration=1)])
-            self.add(sh + [ControllerState(button='L', stick=(0.097, 0.353), duration=1)])
+            self.add(sh + [ControllerState(button='L', stick=(0.977, 0.353), duration=1)])
 
             # no op
             no_op = ControllerState()
@@ -279,8 +279,8 @@ class Action_Space(dict):
 
              # WAVE LAND
             sh = [ControllerState(button='X', duration=sh_dict[char]), ControllerState(duration=1)]
-            self.add(sh+[ControllerState(button='L', stick=(0.05, 0.3), duration=1)])
-            self.add(sh+[ControllerState(button='L', stick=(0.95, 0.3), duration=1)])
+            self.add(sh+[ControllerState(button='L', stick=(0.023, 0.353), duration=1)])
+            self.add(sh+[ControllerState(button='L', stick=(0.977, 0.353), duration=1)])
 
             # shield grab
             sg = ControllerState(button='L')

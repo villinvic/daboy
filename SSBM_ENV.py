@@ -350,9 +350,14 @@ class SSBM_ENV:
                         print('error action nan ? ', self.id)
                         action_id = 0
                         self.policy[player_num].l1.reset_states()
-
+                        
+                   
                     a = self.action_space[player_num][action_id]
-
+                    
+                    #if player_num == 0 and self.state.players[0].on_ground and 0x000E <= self.state.players[0].action_state.value <= 0x0017:
+                    #    if np.random.random() < 0.25 :
+                    #       a = self.action_space[player_num][np.random.choice([39,40])]
+                           
                     if not (player_num == 0 and not self.self_play):
                         self.store_transition(player_num, action_id, deepcopy(self.observation[player_num]))
                     self.recurrent_state[player_num] = r_state
